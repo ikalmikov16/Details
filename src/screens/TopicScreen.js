@@ -1,8 +1,10 @@
-import React, { useEffect, useState } from 'react';
-import { Alert, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import React, { useCallback, useEffect, useState } from 'react';
+import { Alert, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import TimerProgress from '../components/TimerProgress';
 import { useGame } from '../context/GameContext';
 import { useTheme } from '../context/ThemeContext';
 import { getRandomTopic } from '../data/topics';
+import { tapHeavy, tapLight, tapMedium, warning } from '../utils/haptics';
 
 export default function TopicScreen({ navigation }) {
   const { currentRound, numRounds, timeLimit, setCurrentTopic, currentTopic } = useGame();
@@ -10,13 +12,25 @@ export default function TopicScreen({ navigation }) {
   const [isTimerRunning, setIsTimerRunning] = useState(false);
   const [timeRemaining, setTimeRemaining] = useState(timeLimit);
 
+  // Define handleTimerEnd first so it can be used in useEffect
+  const handleTimerEnd = useCallback(() => {
+    setIsTimerRunning(false);
+
+    Alert.alert("⏰ Time's Up!", "Drawing time is over! Now it's time to rate the drawings.", [
+      {
+        text: 'Start Rating',
+        onPress: () => navigation.navigate('Rating'),
+      },
+    ]);
+  }, [navigation]);
+
   useEffect(() => {
     // Generate topic when screen loads if not already set
     if (!currentTopic) {
       const topic = getRandomTopic();
       setCurrentTopic(topic);
     }
-  }, []);
+  }, [currentTopic, setCurrentTopic]);
 
   useEffect(() => {
     let interval;
@@ -24,34 +38,39 @@ export default function TopicScreen({ navigation }) {
       interval = setInterval(() => {
         setTimeRemaining((prev) => prev - 1);
       }, 1000);
-    } else if (timeRemaining === 0) {
+    } else if (timeRemaining === 0 && isTimerRunning) {
       handleTimerEnd();
     }
     return () => clearInterval(interval);
-  }, [isTimerRunning, timeRemaining]);
-
-  const handleTimerEnd = () => {
-    setIsTimerRunning(false);
-
-    Alert.alert(
-      '⏰ Time\'s Up!',
-      'Drawing time is over! Now it\'s time to rate the drawings.',
-      [
-        {
-          text: 'Start Rating',
-          onPress: () => navigation.navigate('Rating'),
-        },
-      ]
-    );
-  };
+  }, [isTimerRunning, timeRemaining, handleTimerEnd]);
 
   const handleStartTimer = () => {
+    tapHeavy(); // Strong haptic feedback for starting
     setIsTimerRunning(true);
   };
 
   const handleNewTopic = () => {
+    tapLight();
     const topic = getRandomTopic();
     setCurrentTopic(topic);
+  };
+
+  const handleSkipToRating = () => {
+    tapMedium();
+    warning();
+    Alert.alert('Skip Timer', 'Are you sure everyone is done drawing?', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Skip',
+        onPress: () => {
+          setIsTimerRunning(false);
+          // Use setTimeout to ensure state update completes before navigation
+          setTimeout(() => {
+            navigation.navigate('Rating');
+          }, 50);
+        },
+      },
+    ]);
   };
 
   const formatTime = (seconds) => {
@@ -61,7 +80,12 @@ export default function TopicScreen({ navigation }) {
   };
 
   return (
-    <View style={[styles.container, { backgroundColor: theme.background }]}>
+    <ScrollView
+      style={[styles.container, { backgroundColor: theme.background }]}
+      contentContainerStyle={styles.contentContainer}
+      showsVerticalScrollIndicator={false}
+      keyboardShouldPersistTaps="handled"
+    >
       {/* Header with Round Info */}
       <View style={[styles.header, { backgroundColor: theme.cardBackground }]}>
         <Text style={[styles.roundBadge, { color: theme.primary }]}>
@@ -70,16 +94,24 @@ export default function TopicScreen({ navigation }) {
       </View>
 
       {/* Topic Card */}
-      <View style={[styles.topicContainer, { backgroundColor: theme.cardBackground, borderColor: theme.border }]}>
+      <View
+        style={[
+          styles.topicContainer,
+          { backgroundColor: theme.cardBackground, borderColor: theme.border },
+        ]}
+      >
         <View style={[styles.topicIconCircle, { backgroundColor: theme.primary + '20' }]}>
           <Text style={styles.topicIcon}>🎨</Text>
         </View>
         <Text style={[styles.topicLabel, { color: theme.textSecondary }]}>Your Drawing Topic</Text>
         <Text style={[styles.topicText, { color: theme.text }]}>{currentTopic}</Text>
-        
+
         {!isTimerRunning && (
-          <TouchableOpacity 
-            style={[styles.newTopicButton, { backgroundColor: theme.background, borderColor: theme.border }]}
+          <TouchableOpacity
+            style={[
+              styles.newTopicButton,
+              { backgroundColor: theme.background, borderColor: theme.border },
+            ]}
             onPress={handleNewTopic}
           >
             <Text style={[styles.newTopicButtonText, { color: theme.primary }]}>🔄 New Topic</Text>
@@ -88,21 +120,28 @@ export default function TopicScreen({ navigation }) {
       </View>
 
       {/* Timer Display */}
-      <View style={[styles.timerContainer, { backgroundColor: theme.cardBackground, borderColor: theme.border }]}>
-        <Text style={[
-          styles.timerText,
-          { color: theme.primary },
-          timeRemaining <= 10 && styles.timerTextWarning
-        ]}>
-          {formatTime(timeRemaining)}
-        </Text>
-        <Text style={[styles.timerLabel, { color: theme.textSecondary }]}>
-          {isTimerRunning ? '⏱️ Time Remaining' : '⏸️ Ready to Start'}
-        </Text>
+      <View
+        style={[
+          styles.timerContainer,
+          { backgroundColor: theme.cardBackground, borderColor: theme.border },
+        ]}
+      >
+        {isTimerRunning ? (
+          <TimerProgress seconds={timeRemaining} total={timeLimit} isRunning={isTimerRunning} />
+        ) : (
+          <>
+            <Text style={[styles.timerText, { color: theme.primary }]}>
+              {formatTime(timeRemaining)}
+            </Text>
+            <Text style={[styles.timerLabel, { color: theme.textSecondary }]}>
+              ⏸️ Ready to Start
+            </Text>
+          </>
+        )}
       </View>
 
       {!isTimerRunning ? (
-        <TouchableOpacity 
+        <TouchableOpacity
           style={[styles.startButton, { backgroundColor: theme.success }]}
           onPress={handleStartTimer}
         >
@@ -110,7 +149,9 @@ export default function TopicScreen({ navigation }) {
         </TouchableOpacity>
       ) : (
         <View style={[styles.drawingInfo, { backgroundColor: theme.cardBackground }]}>
-          <Text style={[styles.drawingInfoText, { color: theme.text }]}>✏️ Everyone is drawing now!</Text>
+          <Text style={[styles.drawingInfoText, { color: theme.text }]}>
+            ✏️ Everyone is drawing now!
+          </Text>
           <Text style={[styles.drawingInfoSubtext, { color: theme.textSecondary }]}>
             Draw on paper and wait for the timer to end
           </Text>
@@ -118,43 +159,30 @@ export default function TopicScreen({ navigation }) {
       )}
 
       {isTimerRunning && (
-        <TouchableOpacity 
+        <TouchableOpacity
           style={[styles.skipButton, { backgroundColor: theme.warning }]}
-          onPress={() => {
-            Alert.alert(
-              'Skip Timer',
-              'Are you sure everyone is done drawing?',
-              [
-                { text: 'Cancel', style: 'cancel' },
-                { 
-                  text: 'Skip', 
-                  onPress: () => {
-                    setIsTimerRunning(false);
-                    navigation.navigate('Rating');
-                  }
-                }
-              ]
-            );
-          }}
+          onPress={handleSkipToRating}
         >
           <Text style={styles.skipButtonText}>⏭️ Skip to Rating</Text>
         </TouchableOpacity>
       )}
-    </View>
+    </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+  },
+  contentContainer: {
     padding: 20,
+    paddingBottom: 40,
   },
   header: {
     paddingVertical: 16,
     paddingHorizontal: 20,
     marginBottom: 20,
     borderRadius: 16,
-    marginHorizontal: 20,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.1,
@@ -170,7 +198,6 @@ const styles = StyleSheet.create({
   topicContainer: {
     borderRadius: 24,
     padding: 36,
-    marginHorizontal: 20,
     marginBottom: 24,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 6 },
@@ -221,7 +248,6 @@ const styles = StyleSheet.create({
   },
   timerContainer: {
     alignItems: 'center',
-    marginHorizontal: 20,
     marginBottom: 28,
     paddingVertical: 28,
     paddingHorizontal: 24,
@@ -248,7 +274,6 @@ const styles = StyleSheet.create({
     letterSpacing: 0.5,
   },
   startButton: {
-    marginHorizontal: 20,
     padding: 22,
     borderRadius: 20,
     alignItems: 'center',
@@ -264,7 +289,6 @@ const styles = StyleSheet.create({
     letterSpacing: 0.5,
   },
   drawingInfo: {
-    marginHorizontal: 20,
     padding: 28,
     borderRadius: 20,
     alignItems: 'center',
@@ -283,7 +307,6 @@ const styles = StyleSheet.create({
   },
   skipButton: {
     marginTop: 20,
-    marginHorizontal: 20,
     padding: 20,
     borderRadius: 18,
     alignItems: 'center',
@@ -300,4 +323,3 @@ const styles = StyleSheet.create({
     letterSpacing: 0.5,
   },
 });
-

@@ -1,168 +1,241 @@
+import { get, ref, set } from 'firebase/database';
 import React, { useState } from 'react';
 import {
-  View,
+  Alert,
+  ScrollView,
+  StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
-  StyleSheet,
-  Alert,
+  View,
 } from 'react-native';
-import { ref, set, push } from 'firebase/database';
-import { database } from '../config/firebase';
+import { LoadingOverlay, OfflineBanner } from '../components/NetworkStatus';
+import WheelPicker from '../components/WheelPicker';
+import { auth, database } from '../config/firebase';
 import { useTheme } from '../context/ThemeContext';
+import { error as hapticError, selection, success, tapMedium } from '../utils/haptics';
+import { useNetworkStatus } from '../utils/network';
 
 export default function RoomCreateScreen({ navigation }) {
   const { theme } = useTheme();
+  const { isConnected } = useNetworkStatus();
   const [playerName, setPlayerName] = useState('');
   const [numRounds, setNumRounds] = useState(3);
-  const [timeLimit, setTimeLimit] = useState(60);
+  const [minutes, setMinutes] = useState(1);
+  const [seconds, setSeconds] = useState(0);
   const [isCreating, setIsCreating] = useState(false);
 
+  // Calculate total time limit in seconds
+  const timeLimit = minutes * 60 + seconds;
+
   const generateRoomCode = () => {
-    return Math.random().toString(36).substring(2, 8).toUpperCase();
+    // Exclude O and 0 to avoid confusion
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ123456789';
+    let code = '';
+    for (let i = 0; i < 6; i++) {
+      code += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    return code;
   };
 
   const handleCreateRoom = async () => {
-    if (isCreating) return; // Prevent double submission
+    if (isCreating) return;
+
+    if (!isConnected) {
+      Alert.alert('Offline', 'Please check your internet connection and try again.');
+      return;
+    }
 
     if (playerName.trim() === '') {
       Alert.alert('Error', 'Please enter your name');
       return;
     }
 
+    if (timeLimit < 30) {
+      Alert.alert('Error', 'Time limit must be at least 30 seconds');
+      return;
+    }
+
+    // Ensure user is authenticated
+    if (!auth.currentUser) {
+      Alert.alert('Error', 'Not authenticated. Please restart the app.');
+      return;
+    }
+
     setIsCreating(true);
 
     try {
-      const roomCode = generateRoomCode();
-      const roomRef = ref(database, `rooms/${roomCode}`);
-      
-      const playerId = push(ref(database, 'temp')).key;
-      
-      await set(roomRef, {
-        code: roomCode,
-        hostId: playerId,
-        settings: {
-          numRounds,
-          timeLimit,
-        },
-        status: 'lobby', // lobby, drawing, rating, results, finished
-        currentRound: 1,
-        currentTopic: '',
-        players: {
-          [playerId]: {
-            id: playerId,
-            name: playerName.trim(),
-            isHost: true,
-            totalScore: 0,
-            joined: Date.now(),
-          },
-        },
-        drawings: {},
-        ratings: {},
-        createdAt: Date.now(),
-      });
+      // Use the authenticated user's UID as the player ID
+      // This is required for Firebase security rules to work properly
+      const playerId = auth.currentUser.uid;
 
+      let roomCode = generateRoomCode();
+      let roomCreated = false;
+      let attempts = 0;
+      const maxAttempts = 5;
+
+      // Check if room exists and create it
+      while (!roomCreated && attempts < maxAttempts) {
+        const roomRef = ref(database, `rooms/${roomCode}`);
+
+        // Check if room already exists
+        const snapshot = await get(roomRef);
+        if (snapshot.exists()) {
+          // Room code collision, generate a new one
+          roomCode = generateRoomCode();
+          attempts++;
+          continue;
+        }
+
+        // Create the room
+        await set(roomRef, {
+          code: roomCode,
+          hostId: playerId,
+          settings: {
+            numRounds,
+            timeLimit,
+          },
+          status: 'lobby',
+          currentRound: 1,
+          currentTopic: '',
+          players: {
+            [playerId]: {
+              id: playerId,
+              name: playerName.trim(),
+              totalScore: 0,
+              roundScore: 0,
+            },
+          },
+          createdAt: Date.now(),
+          lastActivity: Date.now(),
+        });
+
+        roomCreated = true;
+      }
+
+      if (!roomCreated) {
+        hapticError();
+        Alert.alert('Error', 'Unable to create room. Please try again.');
+        setIsCreating(false);
+        return;
+      }
+
+      success(); // Haptic feedback on successful room creation
       navigation.replace('Lobby', {
         roomCode,
         playerId,
         playerName: playerName.trim(),
       });
-      // Don't reset isCreating here as we're navigating away
     } catch (error) {
       console.error('Error creating room:', error);
-      Alert.alert('Error', 'Failed to create room. Please try again.');
+      hapticError(); // Haptic feedback on error
+      Alert.alert('Error', 'Failed to create room. Please check your connection and try again.');
       setIsCreating(false);
     }
   };
 
   return (
-    <View style={[styles.container, { backgroundColor: theme.background }]}>
-      <Text style={[styles.title, { color: theme.text }]}>🎨 Create Game Room</Text>
+    <View style={[styles.wrapper, { backgroundColor: theme.background }]}>
+      <OfflineBanner visible={!isConnected} />
+      <LoadingOverlay visible={isCreating} message="Creating room..." />
 
-      <View style={[styles.card, { backgroundColor: theme.cardBackground, borderColor: theme.border }]}>
-        <Text style={[styles.label, { color: theme.textSecondary }]}>Your Name</Text>
-        <TextInput
-          style={[styles.input, { backgroundColor: theme.background, color: theme.text, borderColor: theme.border }]}
-          placeholder="Enter your name"
-          placeholderTextColor={theme.textSecondary}
-          value={playerName}
-          onChangeText={setPlayerName}
-          autoCapitalize="words"
-        />
+      <ScrollView style={styles.container} keyboardShouldPersistTaps="handled">
+        <Text style={[styles.title, { color: theme.text }]}>🎨 Create Game Room</Text>
 
-        <Text style={[styles.label, { color: theme.textSecondary }]}>Number of Rounds</Text>
-        <View style={styles.counterRow}>
-          <TouchableOpacity
-            style={[styles.counterButton, { backgroundColor: theme.primary }]}
-            onPress={() => setNumRounds(Math.max(1, numRounds - 1))}
-          >
-            <Text style={styles.counterButtonText}>-</Text>
-          </TouchableOpacity>
-          <Text style={[styles.counterValue, { color: theme.text }]}>{numRounds}</Text>
-          <TouchableOpacity
-            style={[styles.counterButton, { backgroundColor: theme.primary }]}
-            onPress={() => setNumRounds(numRounds + 1)}
-          >
-            <Text style={styles.counterButtonText}>+</Text>
-          </TouchableOpacity>
+        <View
+          style={[
+            styles.card,
+            { backgroundColor: theme.cardBackground, borderColor: theme.border },
+          ]}
+        >
+          <Text style={[styles.label, { color: theme.textSecondary }]}>Your Name</Text>
+          <TextInput
+            style={[
+              styles.input,
+              { backgroundColor: theme.background, color: theme.text, borderColor: theme.border },
+            ]}
+            placeholder="Enter your name"
+            placeholderTextColor={theme.textSecondary}
+            value={playerName}
+            onChangeText={setPlayerName}
+            autoCapitalize="words"
+          />
+
+          <Text style={[styles.label, { color: theme.textSecondary }]}>Number of Rounds</Text>
+          <View style={styles.counterRow}>
+            <TouchableOpacity
+              style={[styles.counterButton, { backgroundColor: theme.primary }]}
+              onPress={() => {
+                selection();
+                setNumRounds(Math.max(1, numRounds - 1));
+              }}
+            >
+              <Text style={styles.counterButtonText}>-</Text>
+            </TouchableOpacity>
+            <Text style={[styles.counterValue, { color: theme.text }]}>{numRounds}</Text>
+            <TouchableOpacity
+              style={[styles.counterButton, { backgroundColor: theme.primary }]}
+              onPress={() => {
+                selection();
+                setNumRounds(Math.min(10, numRounds + 1));
+              }}
+            >
+              <Text style={styles.counterButtonText}>+</Text>
+            </TouchableOpacity>
+          </View>
+
+          <Text style={[styles.label, { color: theme.textSecondary }]}>Time Limit</Text>
+          <View style={styles.timeRow}>
+            <WheelPicker value={minutes} onChange={setMinutes} maxValue={10} label="min" />
+            <Text style={[styles.timeSeparator, { color: theme.text }]}>:</Text>
+            <WheelPicker value={seconds} onChange={setSeconds} maxValue={59} label="sec" />
+          </View>
         </View>
 
-        <Text style={[styles.label, { color: theme.textSecondary }]}>Time Limit (seconds)</Text>
-        <View style={styles.counterRow}>
-          <TouchableOpacity
-            style={[styles.counterButton, { backgroundColor: theme.primary }]}
-            onPress={() => setTimeLimit(Math.max(30, timeLimit - 30))}
-          >
-            <Text style={styles.counterButtonText}>-</Text>
-          </TouchableOpacity>
-          <Text style={[styles.counterValue, { color: theme.text }]}>{timeLimit}</Text>
-          <TouchableOpacity
-            style={[styles.counterButton, { backgroundColor: theme.primary }]}
-            onPress={() => setTimeLimit(timeLimit + 30)}
-          >
-            <Text style={styles.counterButtonText}>+</Text>
-          </TouchableOpacity>
-        </View>
-      </View>
-
-      <TouchableOpacity
-        style={[
-          styles.createButton,
-          { backgroundColor: theme.success },
-          isCreating && [styles.createButtonDisabled, { opacity: 0.6 }]
-        ]}
-        onPress={handleCreateRoom}
-        disabled={isCreating}
-        activeOpacity={isCreating ? 1 : 0.7}
-      >
-        <Text style={styles.createButtonText}>
-          {isCreating ? 'Creating...' : 'Create Room'}
-        </Text>
-      </TouchableOpacity>
+        <TouchableOpacity
+          style={[
+            styles.createButton,
+            { backgroundColor: theme.success },
+            (!isConnected || isCreating) && styles.buttonDisabled,
+          ]}
+          onPress={() => {
+            tapMedium();
+            handleCreateRoom();
+          }}
+          disabled={!isConnected || isCreating}
+        >
+          <Text style={styles.createButtonText}>
+            {!isConnected ? 'Offline' : isCreating ? 'Creating...' : 'Create Room'}
+          </Text>
+        </TouchableOpacity>
+      </ScrollView>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
+  wrapper: {
+    flex: 1,
+  },
   container: {
     flex: 1,
     padding: 20,
   },
   title: {
     fontSize: 32,
-    fontWeight: 'bold',
+    fontWeight: '800',
     textAlign: 'center',
     marginVertical: 30,
   },
   card: {
-    borderRadius: 15,
-    padding: 20,
+    borderRadius: 20,
+    padding: 24,
     marginBottom: 20,
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 8,
-    elevation: 3,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 10,
+    elevation: 4,
     borderWidth: 1,
   },
   label: {
@@ -172,52 +245,65 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   input: {
-    borderRadius: 10,
-    padding: 15,
+    borderRadius: 12,
+    padding: 16,
     fontSize: 16,
     borderWidth: 1,
+    fontWeight: '500',
   },
   counterRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
+    paddingVertical: 10,
   },
   counterButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     justifyContent: 'center',
     alignItems: 'center',
   },
   counterButtonText: {
     color: '#fff',
     fontSize: 24,
-    fontWeight: 'bold',
+    fontWeight: '800',
   },
   counterValue: {
-    fontSize: 20,
-    fontWeight: 'bold',
+    fontSize: 22,
+    fontWeight: '800',
     marginHorizontal: 30,
     minWidth: 60,
     textAlign: 'center',
   },
+  timeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 10,
+  },
+  timeSeparator: {
+    fontSize: 32,
+    fontWeight: '800',
+    marginHorizontal: 8,
+  },
   createButton: {
-    padding: 18,
-    borderRadius: 15,
+    padding: 20,
+    borderRadius: 18,
     alignItems: 'center',
     shadowColor: '#10b981',
-    shadowOffset: { width: 0, height: 4 },
+    shadowOffset: { width: 0, height: 6 },
     shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 5,
+    shadowRadius: 10,
+    elevation: 6,
+    marginBottom: 30,
   },
-  createButtonDisabled: {
-    shadowOpacity: 0.1,
-    elevation: 2,
+  buttonDisabled: {
+    opacity: 0.6,
   },
   createButtonText: {
     color: '#fff',
     fontSize: 18,
-    fontWeight: 'bold',
+    fontWeight: '800',
   },
 });

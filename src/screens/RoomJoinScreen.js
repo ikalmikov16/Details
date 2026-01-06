@@ -1,24 +1,35 @@
+import { get, ref, set } from 'firebase/database';
 import React, { useState } from 'react';
 import {
-  View,
+  Alert,
+  ScrollView,
+  StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
-  StyleSheet,
-  Alert,
+  View,
 } from 'react-native';
-import { ref, get, update, push } from 'firebase/database';
-import { database } from '../config/firebase';
+import { LoadingOverlay, OfflineBanner } from '../components/NetworkStatus';
+import { auth, database } from '../config/firebase';
 import { useTheme } from '../context/ThemeContext';
+import { error as hapticError, success, tapMedium } from '../utils/haptics';
+import { useNetworkStatus } from '../utils/network';
 
-export default function RoomJoinScreen({ navigation }) {
+export default function RoomJoinScreen({ navigation, route }) {
   const { theme } = useTheme();
+  const { isConnected } = useNetworkStatus();
   const [playerName, setPlayerName] = useState('');
-  const [roomCode, setRoomCode] = useState('');
+  // Pre-fill room code from deep link if provided
+  const [roomCode, setRoomCode] = useState(route.params?.roomCode || '');
   const [isJoining, setIsJoining] = useState(false);
 
   const handleJoinRoom = async () => {
-    if (isJoining) return; // Prevent double submission
+    if (isJoining) return;
+
+    if (!isConnected) {
+      Alert.alert('Offline', 'Please check your internet connection and try again.');
+      return;
+    }
 
     if (playerName.trim() === '') {
       Alert.alert('Error', 'Please enter your name');
@@ -27,6 +38,12 @@ export default function RoomJoinScreen({ navigation }) {
 
     if (roomCode.trim() === '') {
       Alert.alert('Error', 'Please enter a room code');
+      return;
+    }
+
+    // Ensure user is authenticated
+    if (!auth.currentUser) {
+      Alert.alert('Error', 'Not authenticated. Please restart the app.');
       return;
     }
 
@@ -39,7 +56,7 @@ export default function RoomJoinScreen({ navigation }) {
       const snapshot = await get(roomRef);
 
       if (!snapshot.exists()) {
-        Alert.alert('Error', 'Room not found. Please check the code.');
+        Alert.alert('Room Not Found', 'Please check the code and try again.');
         setIsJoining(false);
         return;
       }
@@ -47,99 +64,139 @@ export default function RoomJoinScreen({ navigation }) {
       const roomData = snapshot.val();
 
       if (roomData.status !== 'lobby') {
-        Alert.alert('Error', 'This game has already started.');
+        Alert.alert(
+          'Game Started',
+          'This game has already started. Ask the host to create a new room.'
+        );
         setIsJoining(false);
         return;
       }
 
-      const playerId = push(ref(database, 'temp')).key;
+      // Use the authenticated user's UID as the player ID
+      // This is required for Firebase security rules to work properly
+      const playerId = auth.currentUser.uid;
 
-      await update(ref(database, `rooms/${code}/players/${playerId}`), {
+      // Check if this user is already in the room
+      if (roomData.players && roomData.players[playerId]) {
+        Alert.alert('Already Joined', 'You are already in this room.');
+        setIsJoining(false);
+        navigation.replace('Lobby', {
+          roomCode: code,
+          playerId,
+          playerName: roomData.players[playerId].name,
+        });
+        return;
+      }
+
+      // Write player info directly to their player path
+      // (can't update room root because user isn't a player yet - security rules)
+      await set(ref(database, `rooms/${code}/players/${playerId}`), {
         id: playerId,
         name: playerName.trim(),
-        isHost: false,
         totalScore: 0,
-        joined: Date.now(),
+        roundScore: 0,
       });
 
+      success(); // Haptic feedback on successful join
       navigation.replace('Lobby', {
         roomCode: code,
         playerId,
         playerName: playerName.trim(),
       });
-      // Don't reset isJoining here as we're navigating away
     } catch (error) {
       console.error('Error joining room:', error);
-      Alert.alert('Error', 'Failed to join room. Please try again.');
+      hapticError(); // Haptic feedback on error
+      Alert.alert('Error', 'Failed to join room. Please check your connection and try again.');
       setIsJoining(false);
     }
   };
 
   return (
-    <View style={[styles.container, { backgroundColor: theme.background }]}>
-      <Text style={[styles.title, { color: theme.text }]}>🎨 Join Game Room</Text>
+    <View style={[styles.wrapper, { backgroundColor: theme.background }]}>
+      <OfflineBanner visible={!isConnected} />
+      <LoadingOverlay visible={isJoining} message="Joining room..." />
 
-      <View style={[styles.card, { backgroundColor: theme.cardBackground, borderColor: theme.border }]}>
-        <Text style={[styles.label, { color: theme.textSecondary }]}>Your Name</Text>
-        <TextInput
-          style={[styles.input, { backgroundColor: theme.background, color: theme.text, borderColor: theme.border }]}
-          placeholder="Enter your name"
-          placeholderTextColor={theme.textSecondary}
-          value={playerName}
-          onChangeText={setPlayerName}
-          autoCapitalize="words"
-        />
+      <ScrollView style={styles.container} keyboardShouldPersistTaps="handled">
+        <Text style={[styles.title, { color: theme.text }]}>🚪 Join Game Room</Text>
 
-        <Text style={[styles.label, { color: theme.textSecondary }]}>Room Code</Text>
-        <TextInput
-          style={[styles.codeInput, { backgroundColor: theme.background, color: theme.text, borderColor: theme.border }]}
-          placeholder="XXXXXX"
-          placeholderTextColor={theme.textSecondary}
-          value={roomCode}
-          onChangeText={(text) => setRoomCode(text.toUpperCase())}
-          autoCapitalize="characters"
-          maxLength={6}
-        />
-      </View>
+        <View
+          style={[
+            styles.card,
+            { backgroundColor: theme.cardBackground, borderColor: theme.border },
+          ]}
+        >
+          <Text style={[styles.label, { color: theme.textSecondary }]}>Your Name</Text>
+          <TextInput
+            style={[
+              styles.input,
+              { backgroundColor: theme.background, color: theme.text, borderColor: theme.border },
+            ]}
+            placeholder="Enter your name"
+            placeholderTextColor={theme.textSecondary}
+            value={playerName}
+            onChangeText={setPlayerName}
+            autoCapitalize="words"
+          />
 
-      <TouchableOpacity
-        style={[
-          styles.joinButton,
-          { backgroundColor: theme.primary },
-          isJoining && [styles.joinButtonDisabled, { opacity: 0.6 }]
-        ]}
-        onPress={handleJoinRoom}
-        disabled={isJoining}
-        activeOpacity={isJoining ? 1 : 0.7}
-      >
-        <Text style={styles.joinButtonText}>
-          {isJoining ? 'Joining...' : 'Join Room'}
-        </Text>
-      </TouchableOpacity>
+          <Text style={[styles.label, { color: theme.textSecondary }]}>Room Code</Text>
+          <TextInput
+            style={[
+              styles.codeInput,
+              { backgroundColor: theme.background, color: theme.text, borderColor: theme.border },
+            ]}
+            placeholder="XXXXXX"
+            placeholderTextColor={theme.textSecondary}
+            value={roomCode}
+            onChangeText={(text) => setRoomCode(text.toUpperCase())}
+            autoCapitalize="characters"
+            maxLength={6}
+          />
+        </View>
+
+        <TouchableOpacity
+          style={[
+            styles.joinButton,
+            { backgroundColor: theme.primary },
+            (!isConnected || isJoining) && styles.buttonDisabled,
+          ]}
+          onPress={() => {
+            tapMedium();
+            handleJoinRoom();
+          }}
+          disabled={!isConnected || isJoining}
+        >
+          <Text style={styles.joinButtonText}>
+            {!isConnected ? 'Offline' : isJoining ? 'Joining...' : 'Join Room'}
+          </Text>
+        </TouchableOpacity>
+      </ScrollView>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
+  wrapper: {
+    flex: 1,
+  },
   container: {
     flex: 1,
     padding: 20,
   },
   title: {
     fontSize: 32,
-    fontWeight: 'bold',
+    fontWeight: '800',
     textAlign: 'center',
     marginVertical: 30,
   },
   card: {
-    borderRadius: 15,
-    padding: 20,
+    borderRadius: 20,
+    padding: 24,
     marginBottom: 20,
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 8,
-    elevation: 3,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 10,
+    elevation: 4,
     borderWidth: 1,
   },
   label: {
@@ -149,39 +206,38 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   input: {
-    borderRadius: 10,
-    padding: 15,
+    borderRadius: 12,
+    padding: 16,
     fontSize: 16,
     borderWidth: 1,
+    fontWeight: '500',
   },
   codeInput: {
-    borderRadius: 10,
-    padding: 15,
+    borderRadius: 12,
+    padding: 18,
     fontSize: 28,
     fontWeight: '900',
     textAlign: 'center',
-    letterSpacing: 6,
+    letterSpacing: 8,
     borderWidth: 2,
-    fontFamily: 'Courier',
-    fontVariant: ['tabular-nums'],
   },
   joinButton: {
-    padding: 18,
-    borderRadius: 15,
+    padding: 20,
+    borderRadius: 18,
     alignItems: 'center',
     shadowColor: '#6366f1',
-    shadowOffset: { width: 0, height: 4 },
+    shadowOffset: { width: 0, height: 6 },
     shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 5,
+    shadowRadius: 10,
+    elevation: 6,
+    marginBottom: 30,
   },
-  joinButtonDisabled: {
-    shadowOpacity: 0.1,
-    elevation: 2,
+  buttonDisabled: {
+    opacity: 0.6,
   },
   joinButtonText: {
     color: '#fff',
     fontSize: 18,
-    fontWeight: 'bold',
+    fontWeight: '800',
   },
 });

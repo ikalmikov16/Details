@@ -43,10 +43,10 @@ export const GameProvider = ({ children }) => {
 
     // Update total scores
     const updatedPlayers = players.map((player, index) => {
-      const playerScore = scores.find(s => s.playerIndex === index);
+      const playerScore = scores.find((s) => s.playerIndex === index);
       return {
         ...player,
-        totalScore: player.totalScore + (playerScore?.score || 0)
+        totalScore: player.totalScore + (playerScore?.score || 0),
       };
     });
     setPlayers(updatedPlayers);
@@ -77,4 +77,3 @@ export const GameProvider = ({ children }) => {
 
   return <GameContext.Provider value={value}>{children}</GameContext.Provider>;
 };
-

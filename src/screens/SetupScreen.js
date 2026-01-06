@@ -12,7 +12,8 @@ import { useGame } from '../context/GameContext';
 import { useTheme } from '../context/ThemeContext';
 
 export default function SetupScreen({ navigation }) {
-  const { players, addPlayer, removePlayer, numRounds, setNumRounds, timeLimit, setTimeLimit } = useGame();
+  const { players, addPlayer, removePlayer, numRounds, setNumRounds, timeLimit, setTimeLimit } =
+    useGame();
   const { theme } = useTheme();
   const [playerName, setPlayerName] = useState('');
 
@@ -38,27 +39,36 @@ export default function SetupScreen({ navigation }) {
       <View style={styles.content}>
         <View style={styles.pageHeader}>
           <Text style={[styles.pageTitle, { color: theme.text }]}>Setup Your Game</Text>
-          <Text style={[styles.pageSubtitle, { color: theme.textSecondary }]}>Configure players and rules</Text>
+          <Text style={[styles.pageSubtitle, { color: theme.textSecondary }]}>
+            Configure players and rules
+          </Text>
         </View>
 
         {/* Game Settings */}
-        <View style={[styles.section, { backgroundColor: theme.cardBackground, borderColor: theme.border }]}>
+        <View
+          style={[
+            styles.section,
+            { backgroundColor: theme.cardBackground, borderColor: theme.border },
+          ]}
+        >
           <View style={styles.sectionHeader}>
             <Text style={styles.sectionIcon}>⚙️</Text>
             <Text style={[styles.sectionTitle, { color: theme.text }]}>Game Settings</Text>
           </View>
-          
+
           <View style={styles.settingRow}>
-            <Text style={[styles.settingLabel, { color: theme.textSecondary }]}>Number of Rounds:</Text>
+            <Text style={[styles.settingLabel, { color: theme.textSecondary }]}>
+              Number of Rounds:
+            </Text>
             <View style={styles.counterContainer}>
-              <TouchableOpacity 
+              <TouchableOpacity
                 style={[styles.counterButton, { backgroundColor: theme.primary }]}
                 onPress={() => setNumRounds(Math.max(1, numRounds - 1))}
               >
                 <Text style={styles.counterButtonText}>-</Text>
               </TouchableOpacity>
               <Text style={[styles.counterValue, { color: theme.text }]}>{numRounds}</Text>
-              <TouchableOpacity 
+              <TouchableOpacity
                 style={[styles.counterButton, { backgroundColor: theme.primary }]}
                 onPress={() => setNumRounds(numRounds + 1)}
               >
@@ -68,16 +78,18 @@ export default function SetupScreen({ navigation }) {
           </View>
 
           <View style={styles.settingRow}>
-            <Text style={[styles.settingLabel, { color: theme.textSecondary }]}>Time Limit (seconds):</Text>
+            <Text style={[styles.settingLabel, { color: theme.textSecondary }]}>
+              Time Limit (seconds):
+            </Text>
             <View style={styles.counterContainer}>
-              <TouchableOpacity 
+              <TouchableOpacity
                 style={[styles.counterButton, { backgroundColor: theme.primary }]}
                 onPress={() => setTimeLimit(Math.max(30, timeLimit - 30))}
               >
                 <Text style={styles.counterButtonText}>-</Text>
               </TouchableOpacity>
               <Text style={[styles.counterValue, { color: theme.text }]}>{timeLimit}</Text>
-              <TouchableOpacity 
+              <TouchableOpacity
                 style={[styles.counterButton, { backgroundColor: theme.primary }]}
                 onPress={() => setTimeLimit(timeLimit + 30)}
               >
@@ -88,12 +100,17 @@ export default function SetupScreen({ navigation }) {
         </View>
 
         {/* Add Players */}
-        <View style={[styles.section, { backgroundColor: theme.cardBackground, borderColor: theme.border }]}>
+        <View
+          style={[
+            styles.section,
+            { backgroundColor: theme.cardBackground, borderColor: theme.border },
+          ]}
+        >
           <View style={styles.sectionHeader}>
             <Text style={styles.sectionIcon}>👥</Text>
             <Text style={[styles.sectionTitle, { color: theme.text }]}>Add Players</Text>
           </View>
-          
+
           <View style={styles.inputRow}>
             <TextInput
               style={[styles.input, { backgroundColor: theme.background, color: theme.text }]}
@@ -103,7 +120,7 @@ export default function SetupScreen({ navigation }) {
               onChangeText={setPlayerName}
               onSubmitEditing={handleAddPlayer}
             />
-            <TouchableOpacity 
+            <TouchableOpacity
               style={[styles.addButton, { backgroundColor: theme.success }]}
               onPress={handleAddPlayer}
             >
@@ -113,12 +130,17 @@ export default function SetupScreen({ navigation }) {
 
           <View style={styles.playersContainer}>
             {players.length === 0 ? (
-              <Text style={[styles.noPlayersText, { color: theme.textSecondary }]}>No players added yet</Text>
+              <Text style={[styles.noPlayersText, { color: theme.textSecondary }]}>
+                No players added yet
+              </Text>
             ) : (
               players.map((player, index) => (
-                <View key={index} style={[styles.playerCard, { backgroundColor: theme.background }]}>
+                <View
+                  key={index}
+                  style={[styles.playerCard, { backgroundColor: theme.background }]}
+                >
                   <Text style={[styles.playerName, { color: theme.text }]}>{player.name}</Text>
-                  <TouchableOpacity 
+                  <TouchableOpacity
                     style={[styles.removeButton, { backgroundColor: '#ef4444' }]}
                     onPress={() => removePlayer(index)}
                   >
@@ -131,11 +153,14 @@ export default function SetupScreen({ navigation }) {
         </View>
 
         {/* Start Button */}
-        <TouchableOpacity 
+        <TouchableOpacity
           style={[
             styles.startButton,
             { backgroundColor: theme.primary },
-            players.length < 2 && [styles.startButtonDisabled, { backgroundColor: theme.textSecondary }]
+            players.length < 2 && [
+              styles.startButtonDisabled,
+              { backgroundColor: theme.textSecondary },
+            ],
           ]}
           onPress={handleStartGame}
         >
@@ -331,4 +356,3 @@ const styles = StyleSheet.create({
     letterSpacing: 0.5,
   },
 });
-

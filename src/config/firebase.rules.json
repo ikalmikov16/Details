@@ -1,0 +1,121 @@
+{
+  "rules": {
+    "rooms": {
+      ".read": "auth != null",
+      "$roomId": {
+        ".read": "auth != null",
+        ".write": "auth != null && (newData.child('hostId').val() == auth.uid || data.child('hostId').val() == auth.uid || data.child('players').child(auth.uid).exists())",
+        ".validate": "newData.hasChildren(['code', 'hostId', 'status', 'settings', 'players'])",
+
+        "code": {
+          ".validate": "newData.isString() && newData.val().length == 6"
+        },
+        "hostId": {
+          ".validate": "newData.isString()"
+        },
+        "status": {
+          ".validate": "newData.isString() && newData.val().matches(/^(lobby|drawing|rating|results|finished)$/)"
+        },
+        "settings": {
+          ".validate": "newData.hasChildren(['numRounds', 'timeLimit'])",
+          "numRounds": {
+            ".validate": "newData.isNumber() && newData.val() >= 1 && newData.val() <= 10"
+          },
+          "timeLimit": {
+            ".validate": "newData.isNumber() && newData.val() >= 30 && newData.val() <= 300"
+          }
+        },
+        "players": {
+          "$playerId": {
+            ".write": "auth != null && (auth.uid == $playerId || data.parent().parent().child('hostId').val() == auth.uid)",
+            ".validate": "newData.hasChildren(['id', 'name'])",
+            "id": {
+              ".validate": "newData.isString() && newData.val() == $playerId"
+            },
+            "name": {
+              ".validate": "newData.isString() && newData.val().length >= 1 && newData.val().length <= 20"
+            },
+            "totalScore": {
+              ".validate": "newData.isNumber()"
+            },
+            "roundScore": {
+              ".validate": "newData.isNumber()"
+            }
+          }
+        },
+        "drawings": {
+          "$roundKey": {
+            "$playerId": {
+              ".write": "auth != null && auth.uid == $playerId",
+              ".validate": "newData.hasChildren(['url', 'submittedAt'])"
+            }
+          }
+        },
+        "ratings": {
+          "$raterId": {
+            ".write": "auth != null && auth.uid == $raterId",
+            "$ratedPlayerId": {
+              ".validate": "$raterId != $ratedPlayerId && newData.isNumber() && newData.val() >= 0 && newData.val() <= 10"
+            }
+          }
+        },
+        "currentRound": {
+          ".validate": "newData.isNumber() && newData.val() >= 1"
+        },
+        "currentTopic": {
+          ".validate": "newData.isString()"
+        },
+        "createdAt": {
+          ".validate": "newData.isNumber()"
+        },
+        "lastActivity": {
+          ".validate": "newData.isNumber()"
+        },
+        "drawingStartTime": {
+          ".validate": "newData.isNumber()"
+        },
+        "nextRoomCode": {
+          ".validate": "newData.isString() && newData.val().length == 6"
+        }
+      }
+    },
+
+    "archives": {
+      ".read": "auth != null",
+      "$archiveId": {
+        ".read": "auth != null",
+        ".write": "auth != null",
+        ".validate": "newData.hasChildren(['roomCode', 'completedAt', 'players'])",
+        
+        "roomCode": {
+          ".validate": "newData.isString()"
+        },
+        "completedAt": {
+          ".validate": "newData.isNumber()"
+        },
+        "numRounds": {
+          ".validate": "newData.isNumber()"
+        },
+        "players": {
+          "$playerId": {
+            ".validate": "newData.hasChildren(['id', 'name'])"
+          }
+        },
+        "drawings": {
+          "$playerId": {
+            ".validate": "newData.hasChildren(['url'])"
+          }
+        }
+      }
+    },
+
+    "temp": {
+      ".read": false,
+      ".write": "auth != null"
+    },
+
+    ".read": false,
+    ".write": false
+  }
+}
+

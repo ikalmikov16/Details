@@ -18,13 +18,13 @@ export default function RoundResultsScreen({ navigation }) {
 
   // Get current round scores
   const currentRoundScores = roundScores[currentRound - 1] || [];
-  
+
   // Sort players by current round score
   const sortedPlayers = [...players]
     .map((player, index) => ({
       ...player,
       index,
-      roundScore: currentRoundScores.find(s => s.playerIndex === index)?.score || 0,
+      roundScore: currentRoundScores.find((s) => s.playerIndex === index)?.score || 0,
     }))
     .sort((a, b) => b.roundScore - a.roundScore);
 
@@ -34,13 +34,15 @@ export default function RoundResultsScreen({ navigation }) {
         <View style={styles.headerContainer}>
           <Text style={styles.celebrationEmoji}>🎉</Text>
           <Text style={[styles.title, { color: theme.text }]}>Round {currentRound} Complete!</Text>
-          <Text style={[styles.subtitle, { color: theme.textSecondary }]}>Here's how everyone did</Text>
+          <Text style={[styles.subtitle, { color: theme.textSecondary }]}>
+            Here&apos;s how everyone did
+          </Text>
         </View>
 
         <View style={styles.podiumContainer}>
           {sortedPlayers.map((player, position) => (
-            <View 
-              key={player.index} 
+            <View
+              key={player.index}
               style={[
                 styles.playerCard,
                 { backgroundColor: theme.cardBackground, borderColor: theme.border },
@@ -49,10 +51,16 @@ export default function RoundResultsScreen({ navigation }) {
             >
               <View style={[styles.positionBadge, { backgroundColor: theme.primary }]}>
                 <Text style={styles.positionText}>
-                  {position === 0 ? '🥇' : position === 1 ? '🥈' : position === 2 ? '🥉' : `#${position + 1}`}
+                  {position === 0
+                    ? '🥇'
+                    : position === 1
+                      ? '🥈'
+                      : position === 2
+                        ? '🥉'
+                        : `#${position + 1}`}
                 </Text>
               </View>
-              
+
               <View style={styles.playerInfo}>
                 <Text style={[styles.playerNameText, { color: theme.text }]}>{player.name}</Text>
                 <Text style={[styles.roundScoreText, { color: theme.success }]}>
@@ -66,15 +74,14 @@ export default function RoundResultsScreen({ navigation }) {
           ))}
         </View>
 
-        <TouchableOpacity 
+        <TouchableOpacity
           style={[styles.continueButton, { backgroundColor: theme.primary }]}
           onPress={handleNextRound}
         >
           <Text style={styles.continueButtonText}>
-            {currentRound < numRounds 
-              ? `Continue to Round ${currentRound + 1} →` 
-              : 'View Final Results 🏆'
-            }
+            {currentRound < numRounds
+              ? `Continue to Round ${currentRound + 1} →`
+              : 'View Final Results 🏆'}
           </Text>
         </TouchableOpacity>
       </View>
@@ -182,4 +189,3 @@ const styles = StyleSheet.create({
     letterSpacing: 0.5,
   },
 });
-

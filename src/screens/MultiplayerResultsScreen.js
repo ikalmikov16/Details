@@ -1,99 +1,160 @@
-import React, { useState, useEffect } from 'react';
+import { onValue, ref, update } from 'firebase/database';
+import React, { useEffect, useRef, useState } from 'react';
 import {
-  View,
+  Alert,
+  Image,
+  LayoutAnimation,
+  Modal,
+  Platform,
+  ScrollView,
+  StyleSheet,
   Text,
   TouchableOpacity,
-  StyleSheet,
-  ScrollView,
-  Alert,
+  UIManager,
+  View,
 } from 'react-native';
-import { ref, onValue, update, off } from 'firebase/database';
+import { LoadingOverlay, OfflineBanner } from '../components/NetworkStatus';
 import { database } from '../config/firebase';
-import { getRandomTopic } from '../data/topics';
 import { useTheme } from '../context/ThemeContext';
+import { getRandomTopic } from '../data/topics';
+import { tapLight } from '../utils/haptics';
+import { useNetworkStatus } from '../utils/network';
+import { playRoundComplete } from '../utils/sounds';
+
+// Enable LayoutAnimation on Android
+if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
+  UIManager.setLayoutAnimationEnabledExperimental(true);
+}
 
 export default function MultiplayerResultsScreen({ route, navigation }) {
   const { theme } = useTheme();
   const { roomCode, playerId, playerName } = route.params;
+  const { isConnected } = useNetworkStatus();
   const [players, setPlayers] = useState([]);
+  const [drawings, setDrawings] = useState({});
+  const [ratings, setRatings] = useState({});
   const [currentRound, setCurrentRound] = useState(1);
   const [numRounds, setNumRounds] = useState(3);
   const [isHost, setIsHost] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
+  const [previousTopic, setPreviousTopic] = useState('');
+  const [expandedPlayer, setExpandedPlayer] = useState(null);
+  const [selectedImage, setSelectedImage] = useState(null);
+  const soundPlayed = useRef(false);
+
+  // Play round complete sound once when screen loads
+  useEffect(() => {
+    if (!soundPlayed.current) {
+      soundPlayed.current = true;
+      playRoundComplete();
+    }
+  }, []);
 
   useEffect(() => {
     const roomRef = ref(database, `rooms/${roomCode}`);
-    
-    const unsubscribe = onValue(roomRef, (snapshot) => {
-      if (!snapshot.exists()) {
-        Alert.alert('Error', 'Room not found');
-        navigation.replace('Welcome');
-        return;
-      }
 
-      const roomData = snapshot.val();
-      setCurrentRound(roomData.currentRound || 1);
-      setNumRounds(roomData.settings.numRounds);
-
-      if (roomData.players) {
-        const playersList = Object.values(roomData.players);
-        setPlayers(playersList);
-        
-        const currentPlayer = playersList.find(p => p.id === playerId);
-        if (currentPlayer) {
-          setIsHost(currentPlayer.isHost);
+    const unsubscribe = onValue(
+      roomRef,
+      (snapshot) => {
+        if (!snapshot.exists()) {
+          Alert.alert('Room Closed', 'The room has been closed.');
+          navigation.replace('Welcome');
+          return;
         }
-      }
 
-      // Check if moved to next round
-      if (roomData.status === 'drawing' && roomData.currentRound > currentRound) {
-        navigation.replace('MultiplayerDrawing', {
-          roomCode,
-          playerId,
-          playerName,
-        });
-      }
+        const roomData = snapshot.val();
+        setCurrentRound(roomData.currentRound || 1);
+        setNumRounds(roomData.settings.numRounds);
+        setPreviousTopic(roomData.currentTopic || '');
 
-      // Check if game finished
-      if (roomData.status === 'finished') {
-        navigation.replace('MultiplayerFinal', {
-          roomCode,
-          playerId,
-          playerName,
-        });
-      }
-    });
+        if (roomData.players) {
+          const playersList = Object.values(roomData.players);
+          setPlayers(playersList);
 
-    return () => {
-      off(roomRef);
-    };
-  }, [roomCode, playerId]);
+          // Derive isHost from hostId
+          setIsHost(roomData.hostId === playerId);
+        }
+
+        // Store drawings for current round and ratings for display
+        const round = roomData.currentRound || 1;
+        if (roomData.drawings?.[`round${round}`]) {
+          setDrawings(roomData.drawings[`round${round}`]);
+        }
+        if (roomData.ratings) {
+          setRatings(roomData.ratings);
+        }
+
+        // Check if moved to next round
+        if (roomData.status === 'drawing' && roomData.currentRound > currentRound) {
+          navigation.replace('MultiplayerDrawing', {
+            roomCode,
+            playerId,
+            playerName,
+          });
+        }
+
+        // Check if game finished
+        if (roomData.status === 'finished') {
+          navigation.replace('MultiplayerFinal', {
+            roomCode,
+            playerId,
+            playerName,
+          });
+        }
+      },
+      (error) => {
+        console.error('Firebase error:', error);
+        Alert.alert('Connection Error', 'Lost connection to the game.');
+      }
+    );
+
+    // Use the unsubscribe function returned by onValue instead of off()
+    return () => unsubscribe();
+  }, [roomCode, playerId, currentRound, navigation, playerName]);
 
   const handleNextRound = async () => {
+    if (isLoading || !isConnected) return;
+
+    setIsLoading(true);
+
     if (currentRound < numRounds) {
       try {
         const nextRound = currentRound + 1;
-        const topic = getRandomTopic();
-        
+        // Get a new topic that's different from the previous one
+        let topic = getRandomTopic();
+        let attempts = 0;
+        while (topic === previousTopic && attempts < 10) {
+          topic = getRandomTopic();
+          attempts++;
+        }
+
         await update(ref(database, `rooms/${roomCode}`), {
           status: 'drawing',
           currentRound: nextRound,
           currentTopic: topic,
           drawingStartTime: Date.now(),
-          drawings: {}, // Clear previous round drawings
+          // Don't clear drawings - we keep them for gallery
           ratings: {}, // Clear previous round ratings
+          lastActivity: Date.now(),
         });
+        // Navigation happens via listener
       } catch (error) {
         console.error('Error starting next round:', error);
-        Alert.alert('Error', 'Failed to start next round.');
+        Alert.alert('Error', 'Failed to start next round. Please check your connection.');
+        setIsLoading(false);
       }
     } else {
       // Game finished
       try {
         await update(ref(database, `rooms/${roomCode}`), {
           status: 'finished',
+          lastActivity: Date.now(),
         });
+        // Navigation happens via listener
       } catch (error) {
         console.error('Error finishing game:', error);
+        Alert.alert('Error', 'Failed to finish game. Please try again.');
+        setIsLoading(false);
       }
     }
   };
@@ -104,72 +165,206 @@ export default function MultiplayerResultsScreen({ route, navigation }) {
     return bRoundScore - aRoundScore;
   });
 
-  return (
-    <ScrollView style={[styles.container, { backgroundColor: theme.background }]}>
-      <View style={styles.content}>
-        <Text style={[styles.title, { color: theme.text }]}>🎉 Round {currentRound} Results</Text>
+  // Get ratings received by a specific player (invert the ratings structure)
+  const getRatingsForPlayer = (targetPlayerId) => {
+    const receivedRatings = [];
+    Object.entries(ratings).forEach(([raterId, raterRatings]) => {
+      if (raterRatings[targetPlayerId] !== undefined) {
+        const rater = players.find((p) => p.id === raterId);
+        if (rater) {
+          receivedRatings.push({
+            raterName: rater.name,
+            raterId,
+            score: raterRatings[targetPlayerId],
+          });
+        }
+      }
+    });
+    return receivedRatings;
+  };
 
-        <View style={styles.podiumContainer}>
-          {sortedPlayers.map((player, position) => (
-            <View 
-              key={player.id} 
+  // Toggle expand/collapse for rating breakdown
+  const toggleExpand = (playerId) => {
+    tapLight();
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    setExpandedPlayer(expandedPlayer === playerId ? null : playerId);
+  };
+
+  return (
+    <View style={[styles.wrapper, { backgroundColor: theme.background }]}>
+      <OfflineBanner visible={!isConnected} />
+      <LoadingOverlay
+        visible={isLoading}
+        message={
+          currentRound < numRounds ? 'Starting next round...' : 'Calculating final results...'
+        }
+      />
+
+      <ScrollView style={styles.container}>
+        <View style={styles.content}>
+          <Text style={[styles.title, { color: theme.text }]}>🎉 Round {currentRound} Results</Text>
+
+          <View style={styles.podiumContainer}>
+            {sortedPlayers.map((player, position) => {
+              const playerDrawing = drawings[player.id];
+              const playerRatings = getRatingsForPlayer(player.id);
+              const isExpanded = expandedPlayer === player.id;
+
+              return (
+                <View
+                  key={player.id}
+                  style={[
+                    styles.playerCard,
+                    { backgroundColor: theme.cardBackground, borderColor: theme.border },
+                    position === 0 && [styles.firstPlace, { borderColor: theme.accent }],
+                  ]}
+                >
+                  {/* Top row: Position, Drawing, Info */}
+                  <View style={styles.playerCardTop}>
+                    <View style={[styles.positionBadge, { backgroundColor: theme.primary }]}>
+                      <Text style={styles.positionText}>
+                        {position === 0
+                          ? '🥇'
+                          : position === 1
+                            ? '🥈'
+                            : position === 2
+                              ? '🥉'
+                              : `#${position + 1}`}
+                      </Text>
+                    </View>
+
+                    {/* Drawing Thumbnail */}
+                    {playerDrawing?.url ? (
+                      <TouchableOpacity
+                        style={styles.drawingThumbnail}
+                        onPress={() => setSelectedImage(playerDrawing.url)}
+                        activeOpacity={0.8}
+                      >
+                        <Image
+                          source={{ uri: playerDrawing.url }}
+                          style={styles.thumbnailImage}
+                          resizeMode="cover"
+                        />
+                      </TouchableOpacity>
+                    ) : (
+                      <View style={[styles.noDrawing, { backgroundColor: theme.border }]}>
+                        <Text style={styles.noDrawingText}>🎨</Text>
+                      </View>
+                    )}
+
+                    <View style={styles.playerInfo}>
+                      <Text style={[styles.playerNameText, { color: theme.text }]}>
+                        {player.name} {player.id === playerId && '(You)'}
+                      </Text>
+                      <Text style={[styles.roundScoreText, { color: theme.success }]}>
+                        {player.roundScore || 0} points this round
+                      </Text>
+                      <Text style={[styles.totalScoreText, { color: theme.textSecondary }]}>
+                        Total: {player.totalScore || 0} points
+                      </Text>
+                    </View>
+
+                    {/* Expand arrow on right side */}
+                    {playerRatings.length > 0 && (
+                      <TouchableOpacity
+                        style={styles.expandArrow}
+                        onPress={() => toggleExpand(player.id)}
+                        activeOpacity={0.7}
+                      >
+                        <Text style={[styles.expandArrowText, { color: theme.textSecondary }]}>
+                          {isExpanded ? '▲' : '▼'}
+                        </Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
+
+                  {/* Rating breakdown (expanded) */}
+                  {isExpanded && playerRatings.length > 0 && (
+                    <View style={[styles.ratingBreakdown, { borderTopColor: theme.border }]}>
+                      {playerRatings.map((rating) => (
+                        <View key={rating.raterId} style={styles.ratingRow}>
+                          <Text style={[styles.raterName, { color: theme.textSecondary }]}>
+                            {rating.raterName}
+                          </Text>
+                          <View style={[styles.ratingBadge, { backgroundColor: theme.primary }]}>
+                            <Text style={styles.ratingScore}>{rating.score}</Text>
+                          </View>
+                        </View>
+                      ))}
+                    </View>
+                  )}
+                </View>
+              );
+            })}
+          </View>
+
+          {isHost && (
+            <TouchableOpacity
               style={[
-                styles.playerCard,
+                styles.continueButton,
+                { backgroundColor: theme.primary },
+                (!isConnected || isLoading) && styles.buttonDisabled,
+              ]}
+              onPress={handleNextRound}
+              disabled={!isConnected || isLoading}
+            >
+              <Text style={styles.continueButtonText}>
+                {currentRound < numRounds
+                  ? `Continue to Round ${currentRound + 1} →`
+                  : 'View Final Results 🏆'}
+              </Text>
+            </TouchableOpacity>
+          )}
+
+          {!isHost && (
+            <View
+              style={[
+                styles.waitingCard,
                 { backgroundColor: theme.cardBackground, borderColor: theme.border },
-                position === 0 && [styles.firstPlace, { borderColor: theme.accent }],
               ]}
             >
-              <View style={[styles.positionBadge, { backgroundColor: theme.primary }]}>
-                <Text style={styles.positionText}>
-                  {position === 0 ? '🥇' : position === 1 ? '🥈' : position === 2 ? '🥉' : `#${position + 1}`}
-                </Text>
-              </View>
-              
-              <View style={styles.playerInfo}>
-                <Text style={[styles.playerNameText, { color: theme.text }]}>
-                  {player.name} {player.id === playerId && '(You)'}
-                </Text>
-                <Text style={[styles.roundScoreText, { color: theme.success }]}>
-                  {player.roundScore || 0} points this round
-                </Text>
-                <Text style={[styles.totalScoreText, { color: theme.textSecondary }]}>
-                  Total: {player.totalScore || 0} points
-                </Text>
-              </View>
+              <Text style={[styles.waitingText, { color: theme.textSecondary }]}>
+                Waiting for host to continue...
+              </Text>
             </View>
-          ))}
+          )}
         </View>
+      </ScrollView>
 
-        {isHost && (
-          <TouchableOpacity 
-            style={[styles.continueButton, { backgroundColor: theme.primary }]}
-            onPress={handleNextRound}
-          >
-            <Text style={styles.continueButtonText}>
-              {currentRound < numRounds 
-                ? `Continue to Round ${currentRound + 1} →` 
-                : 'View Final Results 🏆'
-              }
-            </Text>
-          </TouchableOpacity>
-        )}
-
-        {!isHost && (
-          <View style={[styles.waitingCard, { backgroundColor: theme.cardBackground }]}>
-            <Text style={[styles.waitingText, { color: theme.textSecondary }]}>
-              Waiting for host to continue...
-            </Text>
+      {/* Fullscreen Image Modal */}
+      <Modal visible={!!selectedImage} transparent animationType="fade">
+        <TouchableOpacity
+          style={styles.imageModalOverlay}
+          activeOpacity={1}
+          onPress={() => setSelectedImage(null)}
+        >
+          <View style={styles.imageModalContent}>
+            {selectedImage && (
+              <Image
+                source={{ uri: selectedImage }}
+                style={styles.fullscreenImage}
+                resizeMode="contain"
+              />
+            )}
+            <TouchableOpacity
+              style={styles.closeModalButton}
+              onPress={() => setSelectedImage(null)}
+            >
+              <Text style={styles.closeModalText}>✕</Text>
+            </TouchableOpacity>
           </View>
-        )}
-      </View>
-    </ScrollView>
+        </TouchableOpacity>
+      </Modal>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
+  wrapper: {
+    flex: 1,
+  },
   container: {
     flex: 1,
-    
   },
   content: {
     padding: 20,
@@ -177,8 +372,7 @@ const styles = StyleSheet.create({
   },
   title: {
     fontSize: 32,
-    fontWeight: 'bold',
-    
+    fontWeight: '800',
     textAlign: 'center',
     marginBottom: 30,
   },
@@ -187,78 +381,179 @@ const styles = StyleSheet.create({
     marginBottom: 30,
   },
   playerCard: {
-    backgroundColor: '#fff',
-    borderRadius: 15,
-    padding: 20,
+    borderRadius: 20,
+    padding: 16,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 8,
+    elevation: 4,
+    borderWidth: 1,
+    overflow: 'hidden',
+  },
+  playerCardTop: {
     flexDirection: 'row',
     alignItems: 'center',
+  },
+  firstPlace: {
+    borderWidth: 3,
+  },
+  positionBadge: {
+    width: 50,
+    height: 50,
+    borderRadius: 25,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  positionText: {
+    fontSize: 24,
+  },
+  drawingThumbnail: {
+    width: 60,
+    height: 60,
+    borderRadius: 12,
+    marginRight: 12,
+    overflow: 'hidden',
+    backgroundColor: '#fff',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.1,
-    shadowRadius: 8,
-    elevation: 3,
+    shadowRadius: 4,
+    elevation: 2,
   },
-  firstPlace: {
-    
-    borderWidth: 3,
-    
+  thumbnailImage: {
+    width: '100%',
+    height: '100%',
   },
-  positionBadge: {
+  noDrawing: {
     width: 60,
     height: 60,
-    borderRadius: 30,
-    
+    borderRadius: 12,
+    marginRight: 12,
     justifyContent: 'center',
     alignItems: 'center',
-    marginRight: 15,
   },
-  positionText: {
-    fontSize: 28,
+  noDrawingText: {
+    fontSize: 24,
   },
   playerInfo: {
     flex: 1,
   },
   playerNameText: {
     fontSize: 20,
-    fontWeight: 'bold',
-    
+    fontWeight: '800',
     marginBottom: 5,
   },
   roundScoreText: {
     fontSize: 16,
-    
     fontWeight: '600',
     marginBottom: 3,
   },
   totalScoreText: {
     fontSize: 14,
-    
+    fontWeight: '500',
   },
   continueButton: {
-    
-    padding: 18,
-    borderRadius: 15,
+    padding: 20,
+    borderRadius: 20,
     alignItems: 'center',
-    
-    shadowOffset: { width: 0, height: 4 },
+    shadowColor: '#6366f1',
+    shadowOffset: { width: 0, height: 6 },
     shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 5,
+    shadowRadius: 10,
+    elevation: 6,
   },
   continueButtonText: {
     color: '#fff',
     fontSize: 18,
-    fontWeight: 'bold',
+    fontWeight: '800',
+  },
+  buttonDisabled: {
+    opacity: 0.6,
   },
   waitingCard: {
-    backgroundColor: '#fff',
-    padding: 20,
-    borderRadius: 15,
+    padding: 24,
+    borderRadius: 20,
     alignItems: 'center',
+    borderWidth: 1,
   },
   waitingText: {
     fontSize: 16,
-    
     fontStyle: 'italic',
+    fontWeight: '500',
+  },
+  // Expand arrow on right side
+  expandArrow: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginLeft: 8,
+  },
+  expandArrowText: {
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  // Rating breakdown
+  ratingBreakdown: {
+    marginTop: 12,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    gap: 8,
+  },
+  ratingRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 4,
+  },
+  raterName: {
+    fontSize: 15,
+    fontWeight: '500',
+  },
+  ratingBadge: {
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+    borderRadius: 12,
+  },
+  ratingScore: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  // Fullscreen image modal
+  imageModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.9)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  imageModalContent: {
+    width: '100%',
+    height: '100%',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  fullscreenImage: {
+    width: '90%',
+    height: '70%',
+  },
+  closeModalButton: {
+    position: 'absolute',
+    top: 60,
+    right: 20,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  closeModalText: {
+    color: '#fff',
+    fontSize: 24,
+    fontWeight: '600',
   },
 });

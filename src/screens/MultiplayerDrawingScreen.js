@@ -1,63 +1,117 @@
-import { get, off, onValue, ref, update } from 'firebase/database';
+import { get, onValue, ref, update } from 'firebase/database';
 import { getDownloadURL, ref as storageRef, uploadBytes } from 'firebase/storage';
-import React, { useEffect, useState } from 'react';
-import { Alert, Platform, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import DrawingCanvas from '../components/DrawingCanvas';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import {
+  Alert,
+  Animated,
+  Platform,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+} from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import DrawingToolbar, { ERASER_COLOR } from '../components/DrawingToolbar';
+import EnhancedDrawingCanvas from '../components/EnhancedDrawingCanvas';
+import { LoadingOverlay, OfflineBanner } from '../components/NetworkStatus';
 import { database, storage } from '../config/firebase';
 import { useTheme } from '../context/ThemeContext';
+import { error as hapticError, success, tapMedium, warning } from '../utils/haptics';
+import { useNetworkStatus } from '../utils/network';
+import { playClockTick, playSuccess } from '../utils/sounds';
 
 export default function MultiplayerDrawingScreen({ route, navigation }) {
   const { roomCode, playerId, playerName } = route.params;
   const { theme } = useTheme();
+  const { isConnected } = useNetworkStatus();
+  const insets = useSafeAreaInsets();
+  const canvasRef = useRef(null);
+
   const [topic, setTopic] = useState('');
   const [timeRemaining, setTimeRemaining] = useState(0);
-  const [timeLimit, setTimeLimit] = useState(60);
+  const [currentRound, setCurrentRound] = useState(1);
   const [hasSubmitted, setHasSubmitted] = useState(false);
-  const [drawingData, setDrawingData] = useState(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submittedPlayers, setSubmittedPlayers] = useState([]);
+  const [allPlayers, setAllPlayers] = useState([]);
+  const [totalPlayers, setTotalPlayers] = useState(0);
+
+  // Drawing toolbar state
+  const [selectedColor, setSelectedColor] = useState('#000000');
+  const [isEraser, setIsEraser] = useState(false);
+  const [currentStrokeColor, setCurrentStrokeColor] = useState('#000000');
+
+  // Intro animation state
+  const [showIntro, setShowIntro] = useState(true);
+  const [introAnimationDone, setIntroAnimationDone] = useState(false);
+  const [introCountdown, setIntroCountdown] = useState(3);
+
+  // Animation values
+  const pulseAnim = useRef(new Animated.Value(1)).current;
+  const introOpacity = useRef(new Animated.Value(1)).current;
+  const introPulse = useRef(new Animated.Value(1)).current;
+  const headerOpacity = useRef(new Animated.Value(0)).current;
+  const contentOpacity = useRef(new Animated.Value(0)).current;
+
+  // Timer initialization ref to prevent double-start bug
+  const timerInitialized = useRef(false);
 
   useEffect(() => {
     const roomRef = ref(database, `rooms/${roomCode}`);
-    
-    const unsubscribe = onValue(roomRef, (snapshot) => {
-      if (!snapshot.exists()) {
-        Alert.alert('Error', 'Room not found');
-        navigation.replace('Welcome');
-        return;
+
+    const unsubscribe = onValue(
+      roomRef,
+      (snapshot) => {
+        if (!snapshot.exists()) {
+          Alert.alert('Room Closed', 'The room has been closed.');
+          navigation.replace('Welcome');
+          return;
+        }
+
+        const roomData = snapshot.val();
+        setTopic(roomData.currentTopic || '');
+        setCurrentRound(roomData.currentRound || 1);
+        const roomTimeLimit = roomData.settings.timeLimit;
+
+        const playersList = Object.values(roomData.players || {});
+        setTotalPlayers(playersList.length);
+        setAllPlayers(playersList);
+
+        // Get drawings for current round
+        const round = roomData.currentRound || 1;
+        const roundDrawings = roomData.drawings?.[`round${round}`] || {};
+        const submittedIds = Object.keys(roundDrawings);
+        const submitted = playersList.filter((p) => submittedIds.includes(p.id)).map((p) => p.name);
+        setSubmittedPlayers(submitted);
+
+        // Set timeRemaining to full time limit - only once when first loading
+        if (roomData.drawingStartTime && !timerInitialized.current) {
+          timerInitialized.current = true;
+          setTimeRemaining(roomTimeLimit);
+        }
+
+        if (roomData.status === 'rating') {
+          navigation.replace('MultiplayerRating', { roomCode, playerId, playerName });
+        }
+      },
+      (error) => {
+        console.error('Firebase error:', error);
+        Alert.alert('Connection Error', 'Lost connection to the game.');
       }
+    );
 
-      const roomData = snapshot.val();
-      setTopic(roomData.currentTopic || '');
-      setTimeLimit(roomData.settings.timeLimit);
+    // Use the unsubscribe function returned by onValue instead of off()
+    return () => unsubscribe();
+  }, [roomCode, playerId, navigation, playerName]);
 
-      // Calculate time remaining
-      if (roomData.drawingStartTime) {
-        const elapsed = Math.floor((Date.now() - roomData.drawingStartTime) / 1000);
-        const remaining = Math.max(0, roomData.settings.timeLimit - elapsed);
-        setTimeRemaining(remaining);
-      }
-
-      // Check if moved to rating phase
-      if (roomData.status === 'rating') {
-        navigation.replace('MultiplayerRating', {
-          roomCode,
-          playerId,
-          playerName,
-        });
-      }
-    });
-
-    return () => {
-      off(roomRef);
-    };
-  }, [roomCode, playerId]);
-
+  // Only start the drawing timer after intro animation is complete
   useEffect(() => {
-    if (timeRemaining === 0) return;
+    if (timeRemaining === 0 || !introAnimationDone) return;
 
     const timer = setInterval(() => {
       setTimeRemaining((prev) => {
         if (prev <= 1) {
-          handleTimeUp();
           return 0;
         }
         return prev - 1;
@@ -65,161 +119,175 @@ export default function MultiplayerDrawingScreen({ route, navigation }) {
     }, 1000);
 
     return () => clearInterval(timer);
-  }, [timeRemaining]);
+  }, [timeRemaining, introAnimationDone]);
 
-  const handleTimeUp = async () => {
-    if (!hasSubmitted && drawingData) {
-      await handleSubmitDrawing();
-    }
-  };
+  // Handle time up - wrapped in useCallback to avoid stale closures
+  const handleTimeUp = useCallback(async () => {
+    if (hasSubmitted || isSubmitting) return;
 
-  const handleDrawingSave = (signature) => {
-    setDrawingData(signature);
-  };
+    if (Platform.OS !== 'web' && canvasRef.current) {
+      const base64 = await canvasRef.current.toBase64('png', 1.0);
+      if (base64) {
+        // Inline the submit logic to avoid circular dependencies
+        try {
+          const dataUrl = `data:image/png;base64,${base64}`;
+          const response = await fetch(dataUrl);
+          const blob = await response.blob();
 
-  const handleSubmitDrawing = async () => {
-    if (!drawingData) {
-      Alert.alert('No Drawing', 'Please draw something before submitting!');
-      return;
-    }
+          const drawingRef = storageRef(
+            storage,
+            `drawings/${roomCode}/${playerId}_round${currentRound}.png`
+          );
+          await uploadBytes(drawingRef, blob, { contentType: 'image/png' });
+          const downloadURL = await getDownloadURL(drawingRef);
 
-    if (hasSubmitted) {
-      Alert.alert('Already Submitted', 'You have already submitted your drawing.');
-      return;
-    }
+          await update(
+            ref(database, `rooms/${roomCode}/drawings/round${currentRound}/${playerId}`),
+            {
+              url: downloadURL,
+              submittedAt: Date.now(),
+            }
+          );
 
-    try {
-      console.log('Starting drawing upload...');
-      console.log('Drawing data type:', typeof drawingData);
-      console.log('Drawing data length:', drawingData?.length);
-      console.log('Drawing data preview:', drawingData?.substring(0, 100));
-      
-      // Ensure we have a proper data URL
-      let dataUrl = drawingData;
-      if (!dataUrl.startsWith('data:')) {
-        dataUrl = `data:image/png;base64,${dataUrl}`;
-      }
-      
-      console.log('Converting data URL to blob using fetch...');
-      // Use fetch to convert data URL to blob (works in React Native)
-      const response = await fetch(dataUrl);
-      const blob = await response.blob();
-      
-      console.log('Blob created, size:', blob.size, 'type:', blob.type);
-      
-      // Upload drawing to Firebase Storage
-      const drawingRef = storageRef(
-        storage,
-        `drawings/${roomCode}/${playerId}_round${1}.png`
-      );
-
-      console.log('Uploading to path:', `drawings/${roomCode}/${playerId}_round${1}.png`);
-      
-      // Use uploadBytes with the blob
-      await uploadBytes(drawingRef, blob, {
-        contentType: 'image/png'
-      });
-      
-      console.log('Getting download URL...');
-      const downloadURL = await getDownloadURL(drawingRef);
-      
-      console.log('Download URL:', downloadURL);
-      console.log('Saving to database...');
-      
-      // Save drawing URL to database
-      await update(
-        ref(database, `rooms/${roomCode}/drawings/${playerId}`),
-        {
-          url: downloadURL,
-          submittedAt: Date.now(),
+          success();
+          playSuccess();
+        } catch (error) {
+          console.error('Error auto-submitting drawing:', error);
         }
-      );
-
-      setHasSubmitted(true);
-      Alert.alert('Success!', 'Your drawing has been submitted!');
-
-      // Check if all players have submitted
-      checkAllSubmitted();
-    } catch (error) {
-      console.error('Full error uploading drawing:', error);
-      console.error('Error message:', error.message);
-      console.error('Error code:', error.code);
-      console.error('Error stack:', error.stack);
-      
-      let errorMessage = 'Failed to submit drawing. ';
-      
-      if (error.code === 'storage/unauthorized') {
-        errorMessage += 'Storage permissions issue. Check Firebase Storage rules.';
-      } else if (error.message?.includes('CORS')) {
-        errorMessage += 'CORS issue - drawing upload may not work in web browser. Try on phone.';
-      } else if (error.message?.includes('blob')) {
-        errorMessage += 'Data format issue. The drawing format may not be compatible.';
-      } else {
-        errorMessage += `Error: ${error.message || 'Unknown error'}`;
+        return;
       }
-      
-      Alert.alert('Error', errorMessage);
     }
-  };
 
-  const handleSkipDrawing = async () => {
-    if (hasSubmitted) return;
+    // Submit placeholder if no drawing
+    if (!isConnected) return;
 
     try {
-      console.log('Skipping drawing (web/testing mode)...');
-      
-      // Create a simple blank/placeholder data URL (1x1 white pixel PNG)
-      const blankImageDataUrl = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==';
-      
+      const blankImageDataUrl =
+        'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==';
+
       const response = await fetch(blankImageDataUrl);
       const blob = await response.blob();
-      
+
       const drawingRef = storageRef(
         storage,
-        `drawings/${roomCode}/${playerId}_round${1}.png`
+        `drawings/${roomCode}/${playerId}_round${currentRound}.png`
       );
-
-      await uploadBytes(drawingRef, blob, {
-        contentType: 'image/png'
-      });
-      
+      await uploadBytes(drawingRef, blob, { contentType: 'image/png' });
       const downloadURL = await getDownloadURL(drawingRef);
-      
-      await update(
-        ref(database, `rooms/${roomCode}/drawings/${playerId}`),
-        {
-          url: downloadURL,
-          submittedAt: Date.now(),
-          isPlaceholder: true, // Mark as placeholder for testing
-        }
-      );
 
-      setHasSubmitted(true);
-      Alert.alert('Skipped', 'Placeholder drawing submitted (testing mode)');
-      checkAllSubmitted();
+      await update(ref(database, `rooms/${roomCode}/drawings/round${currentRound}/${playerId}`), {
+        url: downloadURL,
+        submittedAt: Date.now(),
+        isPlaceholder: true,
+      });
     } catch (error) {
-      console.error('Error skipping:', error);
-      Alert.alert('Error', 'Failed to skip. Please try again.');
+      console.error('Error submitting placeholder:', error);
     }
-  };
+  }, [hasSubmitted, isSubmitting, isConnected, roomCode, playerId, currentRound]);
 
-  const checkAllSubmitted = async () => {
-    const roomRef = ref(database, `rooms/${roomCode}`);
-    const snapshot = await get(roomRef);
-    
-    if (snapshot.exists()) {
-      const roomData = snapshot.val();
-      const playersCount = Object.keys(roomData.players || {}).length;
-      const drawingsCount = Object.keys(roomData.drawings || {}).length;
-
-      if (playersCount === drawingsCount) {
-        // All players submitted, move to rating
-        await update(ref(database, `rooms/${roomCode}`), {
-          status: 'rating',
-        });
-      }
+  // Handle time up separately
+  useEffect(() => {
+    if (timeRemaining === 0 && introAnimationDone && !hasSubmitted && !isSubmitting) {
+      handleTimeUp();
     }
-  };
+  }, [timeRemaining, introAnimationDone, hasSubmitted, isSubmitting, handleTimeUp]);
+
+  // Haptic and sound feedback at key timer moments
+  useEffect(() => {
+    if (!introAnimationDone) return;
+
+    // Feedback at specific time milestones
+    if (timeRemaining === 30) {
+      warning(); // Light warning at 30 seconds
+    } else if (timeRemaining <= 10 && timeRemaining > 0) {
+      // Clock tick for last 10 seconds
+      tapMedium();
+      playClockTick();
+    }
+  }, [timeRemaining, introAnimationDone]);
+
+  // Intro countdown timer
+  useEffect(() => {
+    if (topic && showIntro && !introAnimationDone && introCountdown > 0) {
+      const countdownTimer = setInterval(() => {
+        setIntroCountdown((prev) => prev - 1);
+      }, 800);
+
+      return () => clearInterval(countdownTimer);
+    }
+  }, [topic, showIntro, introAnimationDone, introCountdown]);
+
+  // Intro animation - show prompt then animate to top
+  useEffect(() => {
+    if (topic && showIntro && !introAnimationDone) {
+      // Start a gentle pulse animation on the topic
+      const pulseLoop = Animated.loop(
+        Animated.sequence([
+          Animated.timing(introPulse, {
+            toValue: 1.05,
+            duration: 600,
+            useNativeDriver: true,
+          }),
+          Animated.timing(introPulse, {
+            toValue: 1,
+            duration: 600,
+            useNativeDriver: true,
+          }),
+        ])
+      );
+      pulseLoop.start();
+
+      return () => {
+        pulseLoop.stop();
+      };
+    }
+  }, [topic, showIntro, introAnimationDone, introPulse]);
+
+  // Animate out when countdown reaches 0 - Simple fade transition
+  useEffect(() => {
+    if (introCountdown === 0 && showIntro && !introAnimationDone) {
+      // Simple fade out the intro
+      Animated.timing(introOpacity, {
+        toValue: 0,
+        duration: 300,
+        useNativeDriver: true,
+      }).start(() => {
+        setShowIntro(false);
+        setIntroAnimationDone(true);
+        // Fade in header and content from top down
+        Animated.stagger(100, [
+          Animated.timing(headerOpacity, {
+            toValue: 1,
+            duration: 250,
+            useNativeDriver: true,
+          }),
+          Animated.timing(contentOpacity, {
+            toValue: 1,
+            duration: 300,
+            useNativeDriver: true,
+          }),
+        ]).start();
+      });
+    }
+  }, [introCountdown, showIntro, introAnimationDone, introOpacity, headerOpacity, contentOpacity]);
+
+  // Pulse animation for timer when <= 10 seconds
+  useEffect(() => {
+    if (timeRemaining <= 10 && timeRemaining > 0 && !showIntro) {
+      Animated.sequence([
+        Animated.timing(pulseAnim, {
+          toValue: 1.15,
+          duration: 150,
+          useNativeDriver: true,
+        }),
+        Animated.timing(pulseAnim, {
+          toValue: 1,
+          duration: 150,
+          useNativeDriver: true,
+        }),
+      ]).start();
+    }
+  }, [timeRemaining, showIntro, pulseAnim]);
 
   const formatTime = (seconds) => {
     const mins = Math.floor(seconds / 60);
@@ -227,63 +295,383 @@ export default function MultiplayerDrawingScreen({ route, navigation }) {
     return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
 
-  return (
-    <View style={[styles.container, { backgroundColor: theme.background }]}>
-      <View style={[styles.header, { backgroundColor: theme.primary }]}>
-        <Text style={[styles.topicLabel, { color: '#c7d2fe' }]}>Draw:</Text>
-        <Text style={[styles.topicText, { color: '#fff' }]}>{topic}</Text>
-        <Text
-          style={[
-            styles.timerText,
-            { color: '#fff' },
-            timeRemaining <= 10 && styles.timerWarning,
-          ]}
-        >
-          ⏱️ {formatTime(timeRemaining)}
-        </Text>
-      </View>
+  const handleColorChange = (color) => {
+    setSelectedColor(color);
+    setIsEraser(false);
+    setCurrentStrokeColor(color);
+  };
 
-      <View style={[styles.canvasContainer, { backgroundColor: '#fff' }]}>
-        {timeRemaining > 0 ? (
-          <DrawingCanvas
-            onSave={handleDrawingSave}
-            onClear={() => setDrawingData(null)}
-          />
-        ) : (
-          <View style={[styles.timeUpOverlay, { backgroundColor: theme.cardBackground }]}>
-            <Text style={[styles.timeUpText, { color: theme.success }]}>⏰ Time's Up!</Text>
-            <Text style={[styles.timeUpSubtext, { color: theme.textSecondary }]}>
-              {hasSubmitted ? 'Drawing submitted' : 'Please submit your drawing'}
-            </Text>
-          </View>
-        )}
-      </View>
+  const handlePenSelect = () => {
+    setIsEraser(false);
+    setCurrentStrokeColor(selectedColor);
+  };
 
-      {!hasSubmitted ? (
-        <View>
+  const handleEraserToggle = () => {
+    setIsEraser(true);
+    setCurrentStrokeColor(ERASER_COLOR);
+  };
+
+  const handleUndo = () => {
+    canvasRef.current?.undo();
+  };
+
+  const handleClear = () => {
+    warning();
+    Alert.alert('Clear Drawing', 'Are you sure you want to clear your drawing?', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Clear',
+        style: 'destructive',
+        onPress: () => canvasRef.current?.reset(),
+      },
+    ]);
+  };
+
+  const submitPlaceholder = async (isAutoSubmit = false) => {
+    if (hasSubmitted || isSubmitting) return;
+
+    if (!isConnected) {
+      if (!isAutoSubmit) Alert.alert('Offline', 'Please check your internet connection.');
+      return;
+    }
+
+    setIsSubmitting(true);
+
+    try {
+      const blankImageDataUrl =
+        'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==';
+
+      const response = await fetch(blankImageDataUrl);
+      const blob = await response.blob();
+
+      const drawingRef = storageRef(
+        storage,
+        `drawings/${roomCode}/${playerId}_round${currentRound}.png`
+      );
+      await uploadBytes(drawingRef, blob, { contentType: 'image/png' });
+      const downloadURL = await getDownloadURL(drawingRef);
+
+      await update(ref(database, `rooms/${roomCode}/drawings/round${currentRound}/${playerId}`), {
+        url: downloadURL,
+        submittedAt: Date.now(),
+        isPlaceholder: true,
+      });
+
+      setHasSubmitted(true);
+      setIsSubmitting(false);
+      checkAllSubmitted();
+    } catch (error) {
+      console.error('Error submitting placeholder:', error);
+      setIsSubmitting(false);
+      if (!isAutoSubmit) Alert.alert('Error', 'Failed to submit. Please try again.');
+    }
+  };
+
+  const handleSubmitDrawing = async (base64Data = null) => {
+    if (hasSubmitted || isSubmitting) return;
+
+    if (Platform.OS === 'web') {
+      Alert.alert('Drawing Not Available', 'Drawing is not supported on web.');
+      return;
+    }
+
+    if (!isConnected) {
+      Alert.alert('Offline', 'Please check your internet connection.');
+      return;
+    }
+
+    setIsSubmitting(true);
+
+    try {
+      let base64 = base64Data;
+      if (!base64 && canvasRef.current) {
+        base64 = await canvasRef.current.toBase64('png', 1.0);
+      }
+
+      if (!base64) {
+        setIsSubmitting(false);
+        Alert.alert('No Drawing', 'Please draw something before submitting!');
+        return;
+      }
+
+      const dataUrl = `data:image/png;base64,${base64}`;
+      const response = await fetch(dataUrl);
+      const blob = await response.blob();
+
+      const drawingRef = storageRef(
+        storage,
+        `drawings/${roomCode}/${playerId}_round${currentRound}.png`
+      );
+      await uploadBytes(drawingRef, blob, { contentType: 'image/png' });
+      const downloadURL = await getDownloadURL(drawingRef);
+
+      await update(ref(database, `rooms/${roomCode}/drawings/round${currentRound}/${playerId}`), {
+        url: downloadURL,
+        submittedAt: Date.now(),
+      });
+
+      setHasSubmitted(true);
+      setIsSubmitting(false);
+      success();
+      playSuccess();
+      checkAllSubmitted();
+    } catch (error) {
+      console.error('Error uploading drawing:', error);
+      setIsSubmitting(false);
+      hapticError();
+      Alert.alert('Error', 'Failed to submit drawing. Please try again.');
+    }
+  };
+
+  const handleSkipDrawing = async () => {
+    await submitPlaceholder(false);
+  };
+
+  // Confirm before submitting early
+  const confirmSubmitDrawing = () => {
+    tapMedium();
+    Alert.alert(
+      'Submit Drawing?',
+      'Are you sure you want to submit your drawing? You still have time remaining.',
+      [
+        { text: 'Keep Drawing', style: 'cancel' },
+        {
+          text: 'Submit',
+          style: 'default',
+          onPress: () => handleSubmitDrawing(),
+        },
+      ]
+    );
+  };
+
+  const checkAllSubmitted = async () => {
+    try {
+      const roomRef = ref(database, `rooms/${roomCode}`);
+      const snapshot = await get(roomRef);
+
+      if (snapshot.exists()) {
+        const roomData = snapshot.val();
+        const playersCount = Object.keys(roomData.players || {}).length;
+        const round = roomData.currentRound || 1;
+        const roundDrawings = roomData.drawings?.[`round${round}`] || {};
+        const drawingsCount = Object.keys(roundDrawings).length;
+
+        if (playersCount === drawingsCount) {
+          await update(ref(database, `rooms/${roomCode}`), { status: 'rating' });
+        }
+      }
+    } catch (error) {
+      console.error('Error checking submissions:', error);
+    }
+  };
+
+  // Web not supported view
+  if (Platform.OS === 'web') {
+    return (
+      <View style={[styles.container, { backgroundColor: theme.background }]}>
+        <OfflineBanner visible={!isConnected} />
+        <View style={styles.webNotSupported}>
+          <Text style={styles.webNotSupportedIcon}>🎨</Text>
+          <Text style={[styles.webNotSupportedTitle, { color: theme.text }]}>
+            Drawing Not Available on Web
+          </Text>
+          <Text style={[styles.webNotSupportedText, { color: theme.textSecondary }]}>
+            Please use the mobile app (iOS/Android) to draw.
+          </Text>
           <TouchableOpacity
-            style={[styles.submitButton, { backgroundColor: theme.success }]}
-            onPress={handleSubmitDrawing}
+            style={[styles.webSkipButton, { backgroundColor: theme.primary }]}
+            onPress={handleSkipDrawing}
+            disabled={!isConnected || isSubmitting}
           >
-            <Text style={styles.submitButtonText}>✓ Submit Drawing</Text>
+            <Text style={styles.webSkipButtonText}>⏭️ Skip Round</Text>
           </TouchableOpacity>
-          
-          {Platform.OS === 'web' && (
-            <TouchableOpacity
-              style={[styles.skipButton, { backgroundColor: theme.warning }]}
-              onPress={handleSkipDrawing}
-            >
-              <Text style={styles.skipButtonText}>⏭️ Skip (Browser/Testing)</Text>
-            </TouchableOpacity>
-          )}
         </View>
-      ) : (
-        <View style={[styles.waitingCard, { backgroundColor: theme.cardBackground }]}>
-          <Text style={[styles.waitingText, { color: theme.success }]}>
-            ✓ Submitted! Waiting for other players...
+      </View>
+    );
+  }
+
+  // Submitted waiting view
+  if (hasSubmitted) {
+    return (
+      <View style={[styles.container, { backgroundColor: theme.background }]}>
+        <View style={[styles.waitingContainer, { backgroundColor: theme.cardBackground }]}>
+          <Text style={styles.waitingIcon}>✅</Text>
+          <Text style={[styles.waitingTitle, { color: theme.success }]}>Drawing Submitted!</Text>
+          <Text style={[styles.waitingSubtext, { color: theme.textSecondary }]}>
+            Waiting for others... ({submittedPlayers.length}/{totalPlayers})
+          </Text>
+
+          <ScrollView style={styles.playerStatusList} showsVerticalScrollIndicator={false}>
+            {allPlayers.map((player) => {
+              const hasPlayerSubmitted = submittedPlayers.includes(player.name);
+              return (
+                <View
+                  key={player.id}
+                  style={[
+                    styles.playerStatusItem,
+                    {
+                      backgroundColor: hasPlayerSubmitted
+                        ? theme.success + '20'
+                        : theme.border + '40',
+                    },
+                  ]}
+                >
+                  <Text style={styles.playerStatusIcon}>{hasPlayerSubmitted ? '✅' : '⏳'}</Text>
+                  <Text
+                    style={[
+                      styles.playerStatusName,
+                      { color: hasPlayerSubmitted ? theme.success : theme.textSecondary },
+                    ]}
+                  >
+                    {player.name}
+                    {player.id === playerId && ' (you)'}
+                  </Text>
+                </View>
+              );
+            })}
+          </ScrollView>
+        </View>
+      </View>
+    );
+  }
+
+  // Time's up view
+  if (timeRemaining === 0) {
+    return (
+      <View style={[styles.container, { backgroundColor: theme.background }]}>
+        <View style={[styles.timeUpContainer, { backgroundColor: theme.cardBackground }]}>
+          <Text style={styles.timeUpIcon}>⏰</Text>
+          <Text style={[styles.timeUpTitle, { color: theme.warning }]}>Time&apos;s Up!</Text>
+          <Text style={[styles.timeUpSubtext, { color: theme.textSecondary }]}>
+            Submitting your drawing...
           </Text>
         </View>
+      </View>
+    );
+  }
+
+  // Timer color based on urgency
+  const getTimerColor = () => {
+    if (timeRemaining <= 10) return '#e74c3c'; // Red - critical
+    if (timeRemaining <= 30) return '#e67e22'; // Orange - warning
+    return theme.primary; // Purple - normal
+  };
+
+  // Main drawing view
+  return (
+    <View style={[styles.container, { backgroundColor: '#FFFFFF' }]}>
+      <OfflineBanner visible={!isConnected} />
+      <LoadingOverlay visible={isSubmitting} message="Submitting drawing..." />
+
+      {/* Intro Overlay - shows prompt centered before animating to header */}
+      {showIntro && (
+        <Animated.View
+          style={[
+            styles.introOverlay,
+            {
+              paddingTop: insets.top,
+              opacity: introOpacity,
+            },
+          ]}
+        >
+          <View style={styles.introContent}>
+            <Text style={styles.introLabel}>DRAW</Text>
+            <Animated.Text style={[styles.introTopic, { transform: [{ scale: introPulse }] }]}>
+              {topic}
+            </Animated.Text>
+            <View style={styles.introPulseContainer}>
+              <View style={styles.countdownCircle}>
+                <Text style={styles.countdownNumber}>
+                  {introCountdown > 0 ? introCountdown : '🎨'}
+                </Text>
+              </View>
+            </View>
+          </View>
+        </Animated.View>
       )}
+
+      {/* Header: Topic + Timer - with safe area padding */}
+      <Animated.View
+        style={[
+          styles.header,
+          {
+            backgroundColor: theme.cardBackground,
+            borderColor: theme.border,
+            paddingTop: insets.top + 10,
+            opacity: headerOpacity,
+          },
+        ]}
+      >
+        {/* Topic on left, Timer on right */}
+        <Text style={[styles.topicText, { color: theme.text }]} numberOfLines={2}>
+          {topic}
+        </Text>
+
+        <Animated.View
+          style={[
+            styles.timerContainer,
+            { backgroundColor: getTimerColor() },
+            { transform: [{ scale: pulseAnim }] },
+          ]}
+        >
+          <Text style={styles.timerText}>{formatTime(timeRemaining)}</Text>
+        </Animated.View>
+      </Animated.View>
+
+      {/* Toolbar */}
+      <Animated.View style={{ opacity: contentOpacity }}>
+        <DrawingToolbar
+          selectedColor={selectedColor}
+          onColorChange={handleColorChange}
+          isEraser={isEraser}
+          onEraserToggle={handleEraserToggle}
+          onPenSelect={handlePenSelect}
+          onUndo={handleUndo}
+          disabled={isSubmitting || showIntro}
+        />
+      </Animated.View>
+
+      {/* Canvas with floating buttons - full width, no margins */}
+      <Animated.View style={[styles.canvasWrapper, { opacity: contentOpacity }]}>
+        <View style={styles.canvasContainer}>
+          <EnhancedDrawingCanvas
+            ref={canvasRef}
+            strokeColor={currentStrokeColor}
+            strokeWidth={isEraser ? 24 : 4}
+            backgroundColor="#FFFFFF"
+          />
+        </View>
+
+        {/* Floating Clear Button - Bottom Left */}
+        <TouchableOpacity
+          style={[
+            styles.floatingButton,
+            styles.floatingButtonLeft,
+            styles.clearButton,
+            { bottom: Math.max(insets.bottom, 16) + 8 },
+          ]}
+          onPress={handleClear}
+          disabled={isSubmitting || showIntro}
+          activeOpacity={0.85}
+        >
+          <Text style={styles.clearButtonText}>↺</Text>
+        </TouchableOpacity>
+
+        {/* Floating Submit Button - Bottom Right */}
+        <TouchableOpacity
+          style={[
+            styles.floatingButton,
+            styles.floatingButtonRight,
+            { backgroundColor: theme.success, bottom: Math.max(insets.bottom, 16) + 8 },
+            (!isConnected || isSubmitting || showIntro) && styles.buttonDisabled,
+          ]}
+          onPress={confirmSubmitDrawing}
+          disabled={!isConnected || isSubmitting || showIntro}
+          activeOpacity={0.85}
+        >
+          <Text style={styles.floatingButtonIcon}>✓</Text>
+        </TouchableOpacity>
+      </Animated.View>
     </View>
   );
 }
@@ -291,123 +679,222 @@ export default function MultiplayerDrawingScreen({ route, navigation }) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    
   },
+  // Header styles
   header: {
-    
-    paddingVertical: 28,
-    paddingHorizontal: 20,
+    flexDirection: 'row',
     alignItems: 'center',
-    borderBottomLeftRadius: 30,
-    borderBottomRightRadius: 30,
-    shadowColor: '#6366f1',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.4,
-    shadowRadius: 16,
-    elevation: 10,
-  },
-  topicLabel: {
-    fontSize: 16,
-
-    marginBottom: 8,
-    fontWeight: '600',
-    letterSpacing: 1,
+    justifyContent: 'space-between',
+    paddingHorizontal: 14,
+    paddingBottom: 10,
+    borderBottomWidth: 1,
   },
   topicText: {
-    fontSize: 26,
-    fontWeight: '800',
-    color: '#fff',
-    marginBottom: 14,
-    textAlign: 'center',
-    letterSpacing: 0.5,
+    flex: 1,
+    fontSize: 18,
+    fontWeight: '700',
+    lineHeight: 24,
+    marginRight: 12,
+  },
+  timerContainer: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 12,
+    minWidth: 70,
+    alignItems: 'center',
   },
   timerText: {
-    fontSize: 32,
-    fontWeight: '800',
-    color: '#fff',
+    fontSize: 18,
+    fontWeight: '900',
+    fontVariant: ['tabular-nums'],
+    color: '#FFFFFF',
   },
-  timerWarning: {
-
+  // Canvas styles
+  canvasWrapper: {
+    flex: 1,
+    position: 'relative',
+    backgroundColor: '#FFFFFF',
   },
   canvasContainer: {
     flex: 1,
-    margin: 16,
-    borderRadius: 24,
-    overflow: 'hidden',
-    backgroundColor: '#fff',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.2,
-    shadowRadius: 16,
-    elevation: 8,
+    backgroundColor: '#FFFFFF',
   },
-  submitButton: {
-    
-    marginHorizontal: 20,
-    marginTop: 20,
-    marginBottom: 10,
-    padding: 20,
-    borderRadius: 20,
-    alignItems: 'center',
-    shadowColor: '#10b981',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.4,
-    shadowRadius: 16,
-    elevation: 8,
-  },
-  submitButtonText: {
-    color: '#fff',
-    fontSize: 20,
-    fontWeight: '800',
-    letterSpacing: 0.5,
-  },
-  skipButton: {
-    
-    marginHorizontal: 20,
-    marginBottom: 20,
-    padding: 18,
-    borderRadius: 20,
-    alignItems: 'center',
-    shadowColor: '#f59e0b',
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.3,
-    shadowRadius: 12,
-    elevation: 6,
-  },
-  skipButtonText: {
-    color: '#fff',
-    fontSize: 17,
-    fontWeight: '700',
-  },
-  waitingCard: {
-    
-    margin: 20,
-    padding: 24,
-    borderRadius: 20,
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#10b981',
-  },
-  waitingText: {
-    fontSize: 18,
-
-    fontWeight: '700',
-  },
-  timeUpOverlay: {
-    flex: 1,
-    
+  // Floating buttons
+  floatingButton: {
+    position: 'absolute',
+    width: 50,
+    height: 50,
+    borderRadius: 25,
     justifyContent: 'center',
     alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.3,
+    shadowRadius: 6,
+    elevation: 6,
   },
-  timeUpText: {
-    fontSize: 36,
-    fontWeight: '800',
-
+  floatingButtonLeft: {
+    left: 20,
+  },
+  floatingButtonRight: {
+    right: 20,
+  },
+  floatingButtonIcon: {
+    fontSize: 22,
+    color: '#fff',
+  },
+  clearButton: {
+    backgroundColor: '#e74c3c',
+  },
+  clearButtonText: {
+    fontSize: 26,
+    fontWeight: '700',
+    color: '#fff',
+  },
+  buttonDisabled: {
+    opacity: 0.6,
+  },
+  // Web not supported styles
+  webNotSupported: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
+  webNotSupportedIcon: {
+    fontSize: 64,
+    marginBottom: 16,
+  },
+  webNotSupportedTitle: {
+    fontSize: 20,
+    fontWeight: '700',
     marginBottom: 12,
+    textAlign: 'center',
+  },
+  webNotSupportedText: {
+    fontSize: 15,
+    textAlign: 'center',
+    marginBottom: 24,
+  },
+  webSkipButton: {
+    paddingHorizontal: 32,
+    paddingVertical: 16,
+    borderRadius: 16,
+  },
+  webSkipButtonText: {
+    color: '#fff',
+    fontSize: 18,
+    fontWeight: '700',
+  },
+  // Waiting styles
+  waitingContainer: {
+    flex: 1,
+    margin: 20,
+    padding: 24,
+    borderRadius: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  waitingIcon: {
+    fontSize: 64,
+    marginBottom: 16,
+  },
+  waitingTitle: {
+    fontSize: 24,
+    fontWeight: '800',
+    marginBottom: 8,
+  },
+  waitingSubtext: {
+    fontSize: 16,
+    fontWeight: '600',
+    marginBottom: 20,
+  },
+  playerStatusList: {
+    width: '100%',
+    maxHeight: 200,
+  },
+  playerStatusItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderRadius: 10,
+    marginBottom: 6,
+  },
+  playerStatusIcon: {
+    fontSize: 16,
+    marginRight: 10,
+  },
+  playerStatusName: {
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  // Time up styles
+  timeUpContainer: {
+    flex: 1,
+    margin: 20,
+    padding: 24,
+    borderRadius: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  timeUpIcon: {
+    fontSize: 64,
+    marginBottom: 16,
+  },
+  timeUpTitle: {
+    fontSize: 28,
+    fontWeight: '800',
+    marginBottom: 8,
   },
   timeUpSubtext: {
-    fontSize: 19,
-
+    fontSize: 16,
     fontWeight: '600',
+  },
+  // Intro overlay styles
+  introOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: '#1a1a2e',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 100,
+  },
+  introContent: {
+    alignItems: 'center',
+    paddingHorizontal: 32,
+  },
+  introLabel: {
+    fontSize: 18,
+    fontWeight: '600',
+    marginBottom: 12,
+    textTransform: 'uppercase',
+    letterSpacing: 4,
+    color: '#8b8b9e',
+  },
+  introTopic: {
+    fontSize: 38,
+    fontWeight: '900',
+    textAlign: 'center',
+    lineHeight: 48,
+    marginBottom: 24,
+    color: '#FFFFFF',
+  },
+  introPulseContainer: {
+    marginTop: 32,
+  },
+  countdownCircle: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    borderWidth: 4,
+    borderColor: '#6c5ce7',
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'rgba(108, 92, 231, 0.15)',
+  },
+  countdownNumber: {
+    fontSize: 38,
+    fontWeight: '900',
+    color: '#a29bfe',
   },
 });

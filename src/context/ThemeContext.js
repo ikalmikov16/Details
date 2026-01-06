@@ -1,4 +1,4 @@
-import React, { createContext, useState, useContext } from 'react';
+import React, { createContext, useContext } from 'react';
 
 const ThemeContext = createContext();
 
@@ -10,20 +10,6 @@ export const useTheme = () => {
   return context;
 };
 
-export const lightTheme = {
-  background: '#f8fafc',
-  cardBackground: '#ffffff',
-  text: '#1e293b',
-  textSecondary: '#64748b',
-  border: '#e2e8f0',
-  primary: '#6366f1',
-  success: '#10b981',
-  warning: '#f59e0b',
-  danger: '#ef4444',
-  accent: '#fbbf24',
-  shadowColor: '#000',
-};
-
 export const darkTheme = {
   background: '#0f172a',
   cardBackground: '#1e293b',
@@ -33,24 +19,15 @@ export const darkTheme = {
   primary: '#6366f1',
   success: '#10b981',
   warning: '#f59e0b',
+  error: '#ef4444',
   danger: '#ef4444',
   accent: '#fbbf24',
   shadowColor: '#000',
 };
 
 export const ThemeProvider = ({ children }) => {
-  const [isDark, setIsDark] = useState(true); // Default to dark mode
-
-  const toggleTheme = () => {
-    setIsDark(!isDark);
-  };
-
-  const theme = isDark ? darkTheme : lightTheme;
-
   const value = {
-    theme,
-    isDark,
-    toggleTheme,
+    theme: darkTheme,
   };
 
   return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;

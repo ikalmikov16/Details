@@ -1,12 +1,5 @@
 import React, { useState } from 'react';
-import {
-  View,
-  Text,
-  TouchableOpacity,
-  StyleSheet,
-  ScrollView,
-  Alert,
-} from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Alert } from 'react-native';
 import Slider from '@react-native-community/slider';
 import { useGame } from '../context/GameContext';
 import { useTheme } from '../context/ThemeContext';
@@ -15,9 +8,11 @@ export default function RatingScreen({ navigation }) {
   const { players, submitRoundScores } = useGame();
   const { theme } = useTheme();
   const [ratings, setRatings] = useState({});
-  
+
   // Initialize ratings for all players
   React.useEffect(() => {
+    if (players.length === 0) return;
+
     const initialRatings = {};
     players.forEach((_, index) => {
       initialRatings[index] = {};
@@ -28,7 +23,7 @@ export default function RatingScreen({ navigation }) {
       });
     });
     setRatings(initialRatings);
-  }, []);
+  }, [players]);
 
   const handleRating = (playerIndex, raterIndex, score) => {
     setRatings({
@@ -61,11 +56,9 @@ export default function RatingScreen({ navigation }) {
     }
 
     if (!allRated) {
-      Alert.alert(
-        'Incomplete Ratings',
-        'Please rate all drawings before continuing.',
-        [{ text: 'OK' }]
-      );
+      Alert.alert('Incomplete Ratings', 'Please rate all drawings before continuing.', [
+        { text: 'OK' },
+      ]);
       return;
     }
 
@@ -90,9 +83,17 @@ export default function RatingScreen({ navigation }) {
         </View>
 
         {players.map((player, playerIndex) => (
-          <View key={playerIndex} style={[styles.playerSection, { backgroundColor: theme.cardBackground, borderColor: theme.border }]}>
-            <Text style={[styles.playerName, { color: theme.text }]}>{player.name}'s Drawing</Text>
-            
+          <View
+            key={playerIndex}
+            style={[
+              styles.playerSection,
+              { backgroundColor: theme.cardBackground, borderColor: theme.border },
+            ]}
+          >
+            <Text style={[styles.playerName, { color: theme.text }]}>
+              {player.name}&apos;s Drawing
+            </Text>
+
             <View style={styles.ratersContainer}>
               {players.map((rater, raterIndex) => {
                 if (playerIndex === raterIndex) {
@@ -139,7 +140,7 @@ export default function RatingScreen({ navigation }) {
           </View>
         ))}
 
-        <TouchableOpacity 
+        <TouchableOpacity
           style={[styles.submitButton, { backgroundColor: theme.primary }]}
           onPress={handleSubmitRatings}
         >
@@ -268,4 +269,3 @@ const styles = StyleSheet.create({
     letterSpacing: 0.5,
   },
 });
-
