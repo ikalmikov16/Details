@@ -52,7 +52,6 @@ export async function archiveGameAndCleanup({ roomCode, players, drawings, numRo
     // Delete the room data
     await remove(ref(database, `rooms/${roomCode}`));
 
-    console.log(`Archived and cleaned up room: ${roomCode}`);
     return true;
   } catch (error) {
     console.error('Error archiving game:', error);
@@ -145,10 +144,6 @@ export async function cleanupStaleRooms() {
       }
     }
 
-    if (cleaned > 0) {
-      console.log(`Cleanup complete: ${cleaned} rooms cleaned, ${archived} archived`);
-    }
-
     return { cleaned, archived };
   } catch (error) {
     console.warn('Error during room cleanup:', error);
@@ -189,10 +184,6 @@ export async function cleanupOldArchives() {
           console.warn(`Failed to clean up archive ${archiveId}:`, error);
         }
       }
-    }
-
-    if (cleaned > 0) {
-      console.log(`Archive cleanup: ${cleaned} old archives removed`);
     }
 
     return { cleaned };

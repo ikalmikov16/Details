@@ -33,7 +33,6 @@ export default function RatingCard({
 }) {
   const { theme } = useTheme();
   const { width: screenWidth, height: screenHeight } = useWindowDimensions();
-  const [imageDimensions, setImageDimensions] = useState(null);
   const [isSaving, setIsSaving] = useState(false);
   const [isSharing, setIsSharing] = useState(false);
   const [scrollEnabled, setScrollEnabled] = useState(false);
@@ -55,31 +54,10 @@ export default function RatingCard({
     }
   }, [containerHeight, contentHeight]);
 
-  // Calculate available width for the image (screen width minus padding)
-  const imageContainerWidth = screenWidth - 40;
-
-  // Load image dimensions
-  useEffect(() => {
-    if (drawingUrl) {
-      const { Image } = require('react-native');
-      Image.getSize(
-        drawingUrl,
-        (width, height) => {
-          setImageDimensions({ width, height, aspectRatio: width / height });
-        },
-        () => {
-          setImageDimensions({ width: 4, height: 3, aspectRatio: 4 / 3 });
-        }
-      );
-    }
-  }, [drawingUrl]);
-
-  // Calculate image height based on aspect ratio, but cap it
-  const maxImageHeight = isOwnDrawing ? screenHeight * 0.5 : screenHeight * 0.4;
-  const calculatedHeight = imageDimensions
-    ? imageContainerWidth / imageDimensions.aspectRatio
-    : 280;
-  const imageHeight = Math.min(calculatedHeight, maxImageHeight);
+  // Use a consistent fixed height to prevent layout shifts
+  // This gives a good balance for most phone screen drawings
+  const defaultImageHeight = isOwnDrawing ? screenHeight * 0.45 : screenHeight * 0.38;
+  const imageHeight = defaultImageHeight;
 
   const handleRatingChange = (value) => {
     if (disabled || isOwnDrawing) return;

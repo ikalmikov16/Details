@@ -46,7 +46,9 @@
           "backgroundColor": "#0D1B2A"
         }
       ],
-      "expo-audio"
+      "expo-audio",
+      "expo-font",
+      "expo-asset"
     ],
     "extra": {
       "eas": {

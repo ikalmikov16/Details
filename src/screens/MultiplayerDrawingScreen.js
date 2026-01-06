@@ -57,6 +57,29 @@ export default function MultiplayerDrawingScreen({ route, navigation }) {
   // Timer initialization ref to prevent double-start bug
   const timerInitialized = useRef(false);
 
+  // Store the last captured canvas data so it's available during auto-submit
+  const lastCanvasDataRef = useRef(null);
+
+  // Periodically capture the canvas while drawing (every 2 seconds)
+  useEffect(() => {
+    if (Platform.OS === 'web' || showIntro || hasSubmitted) return;
+
+    const captureInterval = setInterval(async () => {
+      if (canvasRef.current && !hasSubmitted && !isSubmitting) {
+        try {
+          const base64 = await canvasRef.current.toBase64('png', 1.0);
+          if (base64 && base64.length > 100) {
+            lastCanvasDataRef.current = base64;
+          }
+        } catch (_e) {
+          // Silent fail - just background capture
+        }
+      }
+    }, 2000);
+
+    return () => clearInterval(captureInterval);
+  }, [showIntro, hasSubmitted, isSubmitting]);
+
   useEffect(() => {
     const roomRef = ref(database, `rooms/${roomCode}`);
 
@@ -156,11 +179,50 @@ export default function MultiplayerDrawingScreen({ route, navigation }) {
       let isPlaceholder = false;
 
       // On native platforms, try to capture the canvas
-      if (Platform.OS !== 'web' && canvasRef.current) {
-        const base64 = await canvasRef.current.toBase64('png', 1.0);
-        if (base64) {
-          const dataUrl = `data:image/png;base64,${base64}`;
-          const response = await fetch(dataUrl);
+      if (Platform.OS !== 'web') {
+        let base64 = null;
+
+        // First try to capture directly from canvas
+        if (canvasRef.current) {
+          try {
+            base64 = await canvasRef.current.toBase64('png', 1.0);
+          } catch (_captureError) {
+            console.warn('Auto-submit: canvas capture failed, using fallback');
+          }
+        }
+
+        // Fall back to last saved canvas data if direct capture failed
+        if ((!base64 || base64.length < 100) && lastCanvasDataRef.current) {
+          base64 = lastCanvasDataRef.current;
+        }
+
+        // Upload if we have valid base64
+        if (base64 && base64.length > 100) {
+          try {
+            const dataUrl = `data:image/png;base64,${base64}`;
+            const response = await fetch(dataUrl);
+            const blob = await response.blob();
+
+            const drawingRef = storageRef(
+              storage,
+              `drawings/${roomCode}/${playerId}_round${currentRound}.png`
+            );
+            await uploadBytes(drawingRef, blob, { contentType: 'image/png' });
+            downloadURL = await getDownloadURL(drawingRef);
+          } catch (uploadError) {
+            console.error('Auto-submit upload failed:', uploadError);
+          }
+        }
+      }
+
+      // If no drawing captured (web or empty canvas), submit blank white canvas
+      if (!downloadURL) {
+        // Valid 400x400 white PNG (tested and working)
+        const blankWhitePng =
+          'iVBORw0KGgoAAAANSUhEUgAAAZAAAAGQCAIAAAAP3aGbAAAACXBIWXMAAAsTAAALEwEAmpwYAAAAB3RJTUUH6AEGEjkKLQAAAAd0RVh0QXV0aG9yAKmuzEgAAAAMdEVYdERlc2NyaXB0aW9uABMJISMAAAAKdEVYdENvcHlyaWdodACsD8w6AAAADnRFWHRDcmVhdGlvbiB0aW1lADX3DwkAAAAJdEVYdFNvZnR3YXJlAF1w/zoAAAALdEVYdERpc2NsYWltZXIAt8C0jwAAAAh0RVh0V2FybmluZwDAG+aHAAAAB3RFWHRTb3VyY2UA9f+D6wAAAAh0RVh0Q29tbWVudAD2zJa/AAAABnRFWHRUaXRsZQCo7tInAAACEklEQVR4nO3BAQEAAACCIP+vbkhAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACA3wMehQABLq9o0QAAAABJRU5ErkJggg==';
+
+        try {
+          const response = await fetch(`data:image/png;base64,${blankWhitePng}`);
           const blob = await response.blob();
 
           const drawingRef = storageRef(
@@ -169,24 +231,10 @@ export default function MultiplayerDrawingScreen({ route, navigation }) {
           );
           await uploadBytes(drawingRef, blob, { contentType: 'image/png' });
           downloadURL = await getDownloadURL(drawingRef);
+          isPlaceholder = true;
+        } catch (uploadError) {
+          console.error('Auto-submit: failed to upload placeholder:', uploadError);
         }
-      }
-
-      // If no drawing captured (web or empty canvas), submit placeholder
-      if (!downloadURL) {
-        const blankImageDataUrl =
-          'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==';
-
-        const response = await fetch(blankImageDataUrl);
-        const blob = await response.blob();
-
-        const drawingRef = storageRef(
-          storage,
-          `drawings/${roomCode}/${playerId}_round${currentRound}.png`
-        );
-        await uploadBytes(drawingRef, blob, { contentType: 'image/png' });
-        downloadURL = await getDownloadURL(drawingRef);
-        isPlaceholder = true;
       }
 
       // Update database with the drawing
@@ -373,10 +421,11 @@ export default function MultiplayerDrawingScreen({ route, navigation }) {
     setIsSubmitting(true);
 
     try {
-      const blankImageDataUrl =
-        'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==';
+      // Valid 400x400 white PNG
+      const blankWhitePng =
+        'iVBORw0KGgoAAAANSUhEUgAAAZAAAAGQCAIAAAAP3aGbAAAACXBIWXMAAAsTAAALEwEAmpwYAAAAB3RJTUUH6AEGEjkKLQAAAAd0RVh0QXV0aG9yAKmuzEgAAAAMdEVYdERlc2NyaXB0aW9uABMJISMAAAAKdEVYdENvcHlyaWdodACsD8w6AAAADnRFWHRDcmVhdGlvbiB0aW1lADX3DwkAAAAJdEVYdFNvZnR3YXJlAF1w/zoAAAALdEVYdERpc2NsYWltZXIAt8C0jwAAAAh0RVh0V2FybmluZwDAG+aHAAAAB3RFWHRTb3VyY2UA9f+D6wAAAAh0RVh0Q29tbWVudAD2zJa/AAAABnRFWHRUaXRsZQCo7tInAAACEklEQVR4nO3BAQEAAACCIP+vbkhAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACA3wMehQABLq9o0QAAAABJRU5ErkJggg==';
 
-      const response = await fetch(blankImageDataUrl);
+      const response = await fetch(`data:image/png;base64,${blankWhitePng}`);
       const blob = await response.blob();
 
       const drawingRef = storageRef(
@@ -419,14 +468,56 @@ export default function MultiplayerDrawingScreen({ route, navigation }) {
 
     try {
       let base64 = base64Data;
+
+      // Try to capture the canvas directly
       if (!base64 && canvasRef.current) {
-        base64 = await canvasRef.current.toBase64('png', 1.0);
+        try {
+          base64 = await canvasRef.current.toBase64('png', 1.0);
+        } catch (_captureError) {
+          console.warn('Manual submit: canvas capture failed, using fallback');
+        }
       }
 
-      if (!base64) {
-        setIsSubmitting(false);
-        Alert.alert('No Drawing', 'Please draw something before submitting!');
-        return;
+      // Fall back to last saved canvas data
+      if ((!base64 || base64.length < 100) && lastCanvasDataRef.current) {
+        base64 = lastCanvasDataRef.current;
+      }
+
+      // If still no drawing, use blank white canvas
+      if (!base64 || base64.length < 100) {
+        // Valid 400x400 white PNG
+        const blankWhitePng =
+          'iVBORw0KGgoAAAANSUhEUgAAAZAAAAGQCAIAAAAP3aGbAAAACXBIWXMAAAsTAAALEwEAmpwYAAAAB3RJTUUH6AEGEjkKLQAAAAd0RVh0QXV0aG9yAKmuzEgAAAAMdEVYdERlc2NyaXB0aW9uABMJISMAAAAKdEVYdENvcHlyaWdodACsD8w6AAAADnRFWHRDcmVhdGlvbiB0aW1lADX3DwkAAAAJdEVYdFNvZnR3YXJlAF1w/zoAAAALdEVYdERpc2NsYWltZXIAt8C0jwAAAAh0RVh0V2FybmluZwDAG+aHAAAAB3RFWHRTb3VyY2UA9f+D6wAAAAh0RVh0Q29tbWVudAD2zJa/AAAABnRFWHRUaXRsZQCo7tInAAACEklEQVR4nO3BAQEAAACCIP+vbkhAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACA3wMehQABLq9o0QAAAABJRU5ErkJggg==';
+
+        try {
+          const response = await fetch(`data:image/png;base64,${blankWhitePng}`);
+          const blob = await response.blob();
+          const drawingRef = storageRef(
+            storage,
+            `drawings/${roomCode}/${playerId}_round${currentRound}.png`
+          );
+          await uploadBytes(drawingRef, blob, { contentType: 'image/png' });
+          const downloadURL = await getDownloadURL(drawingRef);
+
+          await update(
+            ref(database, `rooms/${roomCode}/drawings/round${currentRound}/${playerId}`),
+            {
+              url: downloadURL,
+              submittedAt: Date.now(),
+              isPlaceholder: true,
+            }
+          );
+
+          setHasSubmitted(true);
+          setIsSubmitting(false);
+          success();
+          playSuccess();
+          checkAllSubmitted();
+          return;
+        } catch (uploadError) {
+          console.error('Manual submit: failed to upload placeholder:', uploadError);
+          throw uploadError;
+        }
       }
 
       const dataUrl = `data:image/png;base64,${base64}`;

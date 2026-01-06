@@ -73,7 +73,8 @@ export async function checkRoomExists(roomCode) {
     const roomRef = ref(database, `rooms/${roomCode}`);
     const snapshot = await get(roomRef);
     return snapshot.exists();
-  } catch {
+  } catch (error) {
+    console.warn('Failed to check room existence:', error.message);
     return false;
   }
 }

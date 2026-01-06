@@ -78,7 +78,8 @@ export default function MultiplayerRatingScreen({ route, navigation }) {
 
         // Get drawings for current round
         if (roomData.drawings?.[`round${round}`]) {
-          setDrawings(roomData.drawings[`round${round}`]);
+          const roundDrawings = roomData.drawings[`round${round}`];
+          setDrawings(roundDrawings);
         }
 
         // Track who has submitted ratings
@@ -202,16 +203,20 @@ export default function MultiplayerRatingScreen({ route, navigation }) {
     itemVisiblePercentThreshold: 50,
   };
 
-  const renderRatingCard = ({ item: player }) => (
-    <RatingCard
-      player={player}
-      drawingUrl={drawings[player.id]?.url}
-      currentRating={ratings[player.id]}
-      onRatingChange={(score) => handleRating(player.id, score)}
-      disabled={hasSubmitted}
-      isOwnDrawing={player.isOwnDrawing || false}
-    />
-  );
+  const renderRatingCard = ({ item: player }) => {
+    const drawingUrl = drawings[player.id]?.url;
+
+    return (
+      <RatingCard
+        player={player}
+        drawingUrl={drawingUrl}
+        currentRating={ratings[player.id]}
+        onRatingChange={(score) => handleRating(player.id, score)}
+        disabled={hasSubmitted}
+        isOwnDrawing={player.isOwnDrawing || false}
+      />
+    );
+  };
 
   const allRated = Object.keys(ratings).length === playersToRate.length;
 

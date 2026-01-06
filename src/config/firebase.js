@@ -66,7 +66,7 @@ export const signInAnonymouslyIfNeeded = async () => {
           const result = await signInAnonymously(auth);
           resolve(result.user);
         } catch (error) {
-          console.error('Anonymous sign-in failed:', error);
+          console.error('Firebase auth failed:', error.code, error.message);
           reject(error);
         }
       }
