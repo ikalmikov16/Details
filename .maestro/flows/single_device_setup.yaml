@@ -1,0 +1,68 @@
+# Single Device Game Setup Flow
+# Tests the single-device (pass-the-phone) game setup
+
+appId: com.sketchoff.app
+name: Single Device Game Setup
+
+---
+
+# Navigate to Single Device mode
+- tapOn: "Single Device"
+- assertVisible: "Game Setup"
+
+# Test: Add player functionality
+- tapOn:
+    text: "Enter player name"
+- inputText: "Alice"
+- hideKeyboard
+- tapOn: "Add"
+
+# Verify player was added
+- assertVisible: "Alice"
+
+# Add another player
+- tapOn:
+    text: "Enter player name"
+- inputText: "Bob"
+- hideKeyboard
+- tapOn: "Add"
+
+# Verify both players visible
+- assertVisible: "Alice"
+- assertVisible: "Bob"
+
+# Test: Need at least 2 players to start
+# With 2 players, Start Game should be enabled
+
+# Test: Rounds adjustment
+- assertVisible: "Rounds"
+# Verify we can see round controls
+
+# Test: Time limit adjustment
+- assertVisible: "Time"
+
+# Test: Remove player functionality
+# Long press or tap X on a player to remove
+# (Implementation-specific)
+
+# Add a third player
+- tapOn:
+    text: "Enter player name"
+- inputText: "Charlie"
+- hideKeyboard
+- tapOn: "Add"
+
+- assertVisible: "Charlie"
+
+# Verify player count
+- assertVisible: "3"  # Should show 3 players
+
+# Go back without starting game
+- back
+
+# Confirm we want to go back (if there's a confirmation)
+# This depends on implementation
+
+# Verify we're back at welcome
+- assertVisible: "SketchOff"
+

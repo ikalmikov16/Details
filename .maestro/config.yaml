@@ -1,0 +1,23 @@
+# Maestro E2E Test Configuration for SketchOff
+
+# App configuration
+appId: com.sketchoff.app
+
+# Default settings
+flows:
+  - flows/
+
+# Environment variables for tests
+env:
+  TEST_MODE: "true"
+
+# Default timeout for actions
+timeout: 30000
+
+# Retry failed tests
+retryCount: 1
+
+# Screenshots on failure
+onFlowError:
+  - takeScreenshot: error_screenshot
+

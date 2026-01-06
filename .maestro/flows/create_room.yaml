@@ -1,0 +1,55 @@
+# Room Creation Flow Tests
+# Tests the room creation process with various configurations
+
+appId: com.sketchoff.app
+name: Create Room Flow
+
+---
+
+# Navigate to Create Room screen
+- tapOn: "Create Room"
+- assertVisible: "Create Game Room"
+
+# Test: Empty name validation
+- tapOn: "Create Room"
+# Should show error - name is required
+- assertVisible: "Error"
+- tapOn: "OK"
+
+# Test: Enter player name
+- tapOn:
+    text: "Enter your name"
+- inputText: "TestPlayer"
+- hideKeyboard
+
+# Verify name is entered
+- assertVisible: "TestPlayer"
+
+# Test: Adjust rounds (should start at 3)
+# Increase rounds
+- tapOn: "+"
+- assertVisible: "4"
+
+# Decrease rounds back
+- tapOn: "-"
+- assertVisible: "3"
+
+# Test: Time limit picker is visible
+- assertVisible: "Time Limit"
+- assertVisible: "min"
+- assertVisible: "sec"
+
+# Note: Wheel picker interactions are tricky in Maestro
+# We'll verify the default state instead
+- assertVisible: "1"  # Default 1 minute
+
+# Test: Create Room button is enabled
+- assertVisible: "Create Room"
+
+# Don't actually create room (requires network)
+# Just verify the form is complete
+- back
+
+# Verify navigation back works
+- assertVisible: "SketchOff"
+

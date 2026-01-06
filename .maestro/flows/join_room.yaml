@@ -1,0 +1,55 @@
+# Join Room Flow Tests
+# Tests the room joining process
+
+appId: com.sketchoff.app
+name: Join Room Flow
+
+---
+
+# Navigate to Join Room screen
+- tapOn: "Join Room"
+- assertVisible: "Join Game Room"
+
+# Test: Empty validation
+- tapOn: "Join Room"
+# Should show error - name and code required
+- assertVisible: "Error"
+- tapOn: "OK"
+
+# Test: Enter player name
+- tapOn:
+    text: "Enter your name"
+- inputText: "JoinPlayer"
+- hideKeyboard
+
+# Verify name entered
+- assertVisible: "JoinPlayer"
+
+# Test: Room code input
+- tapOn:
+    text: "XXXXXX"
+- inputText: "ABCD12"
+- hideKeyboard
+
+# Room code should be visible and uppercase
+- assertVisible: "ABCD12"
+
+# Test: Invalid room code (non-existent room)
+# This would require network, so we just verify the UI
+- assertVisible: "Join Room"
+
+# Test: Clear room code and re-enter
+- tapOn:
+    text: "ABCD12"
+- eraseText: 6
+- inputText: "TEST99"
+- hideKeyboard
+
+- assertVisible: "TEST99"
+
+# Go back without joining
+- back
+
+# Verify we're back at welcome
+- assertVisible: "SketchOff"
+

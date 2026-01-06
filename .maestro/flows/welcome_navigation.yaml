@@ -1,0 +1,42 @@
+# Welcome Screen Navigation Tests
+# Verifies that all navigation buttons work correctly
+
+appId: com.sketchoff.app
+name: Welcome Screen Navigation
+
+---
+
+# Test: Welcome screen loads correctly
+- assertVisible: "SketchOff"
+- assertVisible: "🎨"
+
+# Test: Stats button navigates to Stats screen
+- tapOn: "Your Stats"
+- assertVisible: "Your Stats"
+- back
+
+# Test: Single Device mode button is visible
+- assertVisible: "Single Device"
+- assertVisible: "Pass the phone between players"
+
+# Test: Multiplayer section is visible
+- assertVisible: "Multiplayer"
+
+# Test: Create Room button navigates correctly
+- tapOn: "Create Room"
+- assertVisible: "Create Game Room"
+- assertVisible: "Your Name"
+- assertVisible: "Number of Rounds"
+- assertVisible: "Time Limit"
+- back
+
+# Test: Join Room button navigates correctly
+- tapOn: "Join Room"
+- assertVisible: "Join Game Room"
+- assertVisible: "Your Name"
+- assertVisible: "Room Code"
+- back
+
+# Verify we're back at Welcome screen
+- assertVisible: "SketchOff"
+

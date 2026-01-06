@@ -15,6 +15,7 @@ import { auth, database } from '../config/firebase';
 import { useTheme } from '../context/ThemeContext';
 import { error as hapticError, selection, success, tapMedium } from '../utils/haptics';
 import { useNetworkStatus } from '../utils/network';
+import { generateRoomCode } from '../utils/roomCode';
 
 export default function RoomCreateScreen({ navigation }) {
   const { theme } = useTheme();
@@ -27,16 +28,6 @@ export default function RoomCreateScreen({ navigation }) {
 
   // Calculate total time limit in seconds
   const timeLimit = minutes * 60 + seconds;
-
-  const generateRoomCode = () => {
-    // Exclude O and 0 to avoid confusion
-    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ123456789';
-    let code = '';
-    for (let i = 0; i < 6; i++) {
-      code += chars.charAt(Math.floor(Math.random() * chars.length));
-    }
-    return code;
-  };
 
   const handleCreateRoom = async () => {
     if (isCreating) return;
