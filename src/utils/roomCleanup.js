@@ -1,9 +1,6 @@
 import { get, ref, remove, set } from 'firebase/database';
 import { database, getCurrentUserId } from '../config/firebase';
-
-// How long to keep rooms before cleanup (in milliseconds)
-const FINISHED_ROOM_MAX_AGE = 1 * 60 * 60 * 1000; // 1 hour for finished games
-const STALE_ROOM_MAX_AGE = 24 * 60 * 60 * 1000; // 24 hours for any room (abandoned games)
+import { CLEANUP_CONFIG } from './constants';
 
 /**
  * Archive a completed game's essential data (preserves drawing URLs)
@@ -111,13 +108,13 @@ export async function cleanupStaleRooms() {
       let shouldArchive = false;
 
       // Finished games older than 1 hour - safe to clean (game is over)
-      if (roomData.status === 'finished' && age > FINISHED_ROOM_MAX_AGE) {
+      if (roomData.status === 'finished' && age > CLEANUP_CONFIG.FINISHED_ROOM_MAX_AGE_MS) {
         shouldClean = true;
         shouldArchive = true;
       }
       // Any room older than 24 hours - abandoned, safe to clean
       // (active games update lastActivity frequently, so they won't hit this)
-      else if (age > STALE_ROOM_MAX_AGE) {
+      else if (age > CLEANUP_CONFIG.STALE_ROOM_MAX_AGE_MS) {
         shouldClean = true;
         shouldArchive = true;
       }
@@ -171,12 +168,13 @@ export async function cleanupOldArchives() {
     }
 
     const now = Date.now();
-    const thirtyDaysAgo = now - 30 * 24 * 60 * 60 * 1000;
+    const archiveMaxAgeMs = CLEANUP_CONFIG.ARCHIVE_MAX_AGE_DAYS * 24 * 60 * 60 * 1000;
+    const archiveExpiry = now - archiveMaxAgeMs;
     const archives = snapshot.val();
     let cleaned = 0;
 
     for (const [archiveId, archiveData] of Object.entries(archives)) {
-      if (archiveData.completedAt < thirtyDaysAgo) {
+      if (archiveData.completedAt < archiveExpiry) {
         try {
           await remove(ref(database, `archives/${archiveId}`));
           cleaned++;

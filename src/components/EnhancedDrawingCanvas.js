@@ -1,4 +1,4 @@
-import React, { forwardRef, useImperativeHandle, useMemo, useRef } from 'react';
+import React, { forwardRef, memo, useImperativeHandle, useRef } from 'react';
 import { Platform, StyleSheet, View } from 'react-native';
 import { useSharedValue } from 'react-native-reanimated';
 
@@ -12,16 +12,24 @@ if (Platform.OS !== 'web') {
 
 const EnhancedDrawingCanvas = forwardRef(
   (
-    { strokeColor = '#000000', strokeWidth = 4, backgroundColor = '#FFFFFF', onDrawEnd, style },
+    {
+      strokeColor = '#000000',
+      strokeWidth = 4,
+      backgroundColor = '#FFFFFF',
+      isEraser = false,
+      onDrawEnd,
+      style,
+    },
     ref
   ) => {
     const canvasRef = useRef(null);
 
     // Use shared values for reactive stroke color/width
+    // These run on the UI thread, avoiding JS thread blocking
     const strokeColorValue = useSharedValue(strokeColor);
     const strokeWidthValue = useSharedValue(strokeWidth);
 
-    // Update shared values when props change
+    // Update shared values when props change - runs on UI thread
     React.useEffect(() => {
       strokeColorValue.value = strokeColor;
     }, [strokeColor, strokeColorValue]);
@@ -63,13 +71,6 @@ const EnhancedDrawingCanvas = forwardRef(
       },
     }));
 
-    // Smooth path effect for nicer lines
-    const pathEffect = useMemo(() => {
-      if (Platform.OS === 'web') return null;
-      const { CornerPathEffect } = require('@shopify/react-native-skia');
-      return <CornerPathEffect r={16} />;
-    }, []);
-
     // Web fallback - show message that drawing isn't supported
     if (Platform.OS === 'web') {
       return (
@@ -91,7 +92,6 @@ const EnhancedDrawingCanvas = forwardRef(
           strokeColor={strokeColorValue}
           strokeWidth={strokeWidthValue}
           backgroundColor={backgroundColor}
-          pathEffect={pathEffect}
           zoomable={false}
           onDrawEnd={onDrawEnd}
         />
@@ -101,6 +101,9 @@ const EnhancedDrawingCanvas = forwardRef(
 );
 
 EnhancedDrawingCanvas.displayName = 'EnhancedDrawingCanvas';
+
+// Memoize to prevent re-renders from parent state changes (timer, etc.)
+const MemoizedEnhancedDrawingCanvas = memo(EnhancedDrawingCanvas);
 
 const styles = StyleSheet.create({
   container: {
@@ -124,4 +127,4 @@ const styles = StyleSheet.create({
   },
 });
 
-export default EnhancedDrawingCanvas;
+export default MemoizedEnhancedDrawingCanvas;

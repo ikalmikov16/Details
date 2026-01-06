@@ -1,6 +1,6 @@
 import { get, onValue, ref, update } from 'firebase/database';
 import { getDownloadURL, ref as storageRef, uploadBytes } from 'firebase/storage';
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
   Animated,
@@ -17,6 +17,13 @@ import EnhancedDrawingCanvas from '../components/EnhancedDrawingCanvas';
 import { LoadingOverlay, OfflineBanner } from '../components/NetworkStatus';
 import { database, storage } from '../config/firebase';
 import { useTheme } from '../context/ThemeContext';
+import {
+  BLANK_WHITE_PNG_BASE64,
+  CANVAS_CAPTURE,
+  DRAWING_CONFIG,
+  MIN_VALID_DRAWING_LENGTH,
+  TIMER_COLORS,
+} from '../utils/constants';
 import { error as hapticError, success, tapMedium, warning } from '../utils/haptics';
 import { useNetworkStatus } from '../utils/network';
 import { playClockTickCountdown, playSuccess, stopClockTick } from '../utils/sounds';
@@ -42,6 +49,12 @@ export default function MultiplayerDrawingScreen({ route, navigation }) {
   const [isEraser, setIsEraser] = useState(false);
   const [currentStrokeColor, setCurrentStrokeColor] = useState('#000000');
 
+  // Memoize stroke width to prevent unnecessary canvas re-renders
+  const strokeWidth = useMemo(
+    () => (isEraser ? DRAWING_CONFIG.ERASER_STROKE_WIDTH : DRAWING_CONFIG.PEN_STROKE_WIDTH),
+    [isEraser]
+  );
+
   // Intro animation state
   const [showIntro, setShowIntro] = useState(true);
   const [introAnimationDone, setIntroAnimationDone] = useState(false);
@@ -60,25 +73,46 @@ export default function MultiplayerDrawingScreen({ route, navigation }) {
   // Store the last captured canvas data so it's available during auto-submit
   const lastCanvasDataRef = useRef(null);
 
-  // Periodically capture the canvas while drawing (every 2 seconds)
+  // Lock to prevent concurrent canvas captures (fixes race condition)
+  const captureInProgressRef = useRef(false);
+
+  // Helper function to safely capture canvas with lock
+  const captureCanvas = useCallback(async () => {
+    // Skip if capture already in progress or canvas not ready
+    if (captureInProgressRef.current || !canvasRef.current) {
+      return lastCanvasDataRef.current;
+    }
+
+    captureInProgressRef.current = true;
+    try {
+      const base64 = await canvasRef.current.toBase64(
+        CANVAS_CAPTURE.FORMAT,
+        CANVAS_CAPTURE.QUALITY
+      );
+      if (base64 && base64.length > MIN_VALID_DRAWING_LENGTH) {
+        lastCanvasDataRef.current = base64;
+        return base64;
+      }
+    } catch (_e) {
+      // Silent fail - return last known good capture
+    } finally {
+      captureInProgressRef.current = false;
+    }
+    return lastCanvasDataRef.current;
+  }, []);
+
+  // Periodically capture the canvas while drawing for backup
   useEffect(() => {
     if (Platform.OS === 'web' || showIntro || hasSubmitted) return;
 
-    const captureInterval = setInterval(async () => {
-      if (canvasRef.current && !hasSubmitted && !isSubmitting) {
-        try {
-          const base64 = await canvasRef.current.toBase64('png', 1.0);
-          if (base64 && base64.length > 100) {
-            lastCanvasDataRef.current = base64;
-          }
-        } catch (_e) {
-          // Silent fail - just background capture
-        }
+    const captureInterval = setInterval(() => {
+      if (!hasSubmitted && !isSubmitting) {
+        captureCanvas();
       }
-    }, 2000);
+    }, CANVAS_CAPTURE.INTERVAL_MS);
 
     return () => clearInterval(captureInterval);
-  }, [showIntro, hasSubmitted, isSubmitting]);
+  }, [showIntro, hasSubmitted, isSubmitting, captureCanvas]);
 
   useEffect(() => {
     const roomRef = ref(database, `rooms/${roomCode}`);
@@ -178,26 +212,12 @@ export default function MultiplayerDrawingScreen({ route, navigation }) {
       let downloadURL;
       let isPlaceholder = false;
 
-      // On native platforms, try to capture the canvas
+      // On native platforms, try to capture the canvas using our synchronized helper
       if (Platform.OS !== 'web') {
-        let base64 = null;
-
-        // First try to capture directly from canvas
-        if (canvasRef.current) {
-          try {
-            base64 = await canvasRef.current.toBase64('png', 1.0);
-          } catch (_captureError) {
-            console.warn('Auto-submit: canvas capture failed, using fallback');
-          }
-        }
-
-        // Fall back to last saved canvas data if direct capture failed
-        if ((!base64 || base64.length < 100) && lastCanvasDataRef.current) {
-          base64 = lastCanvasDataRef.current;
-        }
+        const base64 = await captureCanvas();
 
         // Upload if we have valid base64
-        if (base64 && base64.length > 100) {
+        if (base64 && base64.length > MIN_VALID_DRAWING_LENGTH) {
           try {
             const dataUrl = `data:image/png;base64,${base64}`;
             const response = await fetch(dataUrl);
@@ -217,12 +237,8 @@ export default function MultiplayerDrawingScreen({ route, navigation }) {
 
       // If no drawing captured (web or empty canvas), submit blank white canvas
       if (!downloadURL) {
-        // Valid 400x400 white PNG (tested and working)
-        const blankWhitePng =
-          'iVBORw0KGgoAAAANSUhEUgAAAZAAAAGQCAIAAAAP3aGbAAAACXBIWXMAAAsTAAALEwEAmpwYAAAAB3RJTUUH6AEGEjkKLQAAAAd0RVh0QXV0aG9yAKmuzEgAAAAMdEVYdERlc2NyaXB0aW9uABMJISMAAAAKdEVYdENvcHlyaWdodACsD8w6AAAADnRFWHRDcmVhdGlvbiB0aW1lADX3DwkAAAAJdEVYdFNvZnR3YXJlAF1w/zoAAAALdEVYdERpc2NsYWltZXIAt8C0jwAAAAh0RVh0V2FybmluZwDAG+aHAAAAB3RFWHRTb3VyY2UA9f+D6wAAAAh0RVh0Q29tbWVudAD2zJa/AAAABnRFWHRUaXRsZQCo7tInAAACEklEQVR4nO3BAQEAAACCIP+vbkhAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACA3wMehQABLq9o0QAAAABJRU5ErkJggg==';
-
         try {
-          const response = await fetch(`data:image/png;base64,${blankWhitePng}`);
+          const response = await fetch(`data:image/png;base64,${BLANK_WHITE_PNG_BASE64}`);
           const blob = await response.blob();
 
           const drawingRef = storageRef(
@@ -263,6 +279,7 @@ export default function MultiplayerDrawingScreen({ route, navigation }) {
     playerId,
     currentRound,
     checkAllSubmitted,
+    captureCanvas,
   ]);
 
   // Handle time up separately
@@ -421,11 +438,7 @@ export default function MultiplayerDrawingScreen({ route, navigation }) {
     setIsSubmitting(true);
 
     try {
-      // Valid 400x400 white PNG
-      const blankWhitePng =
-        'iVBORw0KGgoAAAANSUhEUgAAAZAAAAGQCAIAAAAP3aGbAAAACXBIWXMAAAsTAAALEwEAmpwYAAAAB3RJTUUH6AEGEjkKLQAAAAd0RVh0QXV0aG9yAKmuzEgAAAAMdEVYdERlc2NyaXB0aW9uABMJISMAAAAKdEVYdENvcHlyaWdodACsD8w6AAAADnRFWHRDcmVhdGlvbiB0aW1lADX3DwkAAAAJdEVYdFNvZnR3YXJlAF1w/zoAAAALdEVYdERpc2NsYWltZXIAt8C0jwAAAAh0RVh0V2FybmluZwDAG+aHAAAAB3RFWHRTb3VyY2UA9f+D6wAAAAh0RVh0Q29tbWVudAD2zJa/AAAABnRFWHRUaXRsZQCo7tInAAACEklEQVR4nO3BAQEAAACCIP+vbkhAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACA3wMehQABLq9o0QAAAABJRU5ErkJggg==';
-
-      const response = await fetch(`data:image/png;base64,${blankWhitePng}`);
+      const response = await fetch(`data:image/png;base64,${BLANK_WHITE_PNG_BASE64}`);
       const blob = await response.blob();
 
       const drawingRef = storageRef(
@@ -467,30 +480,13 @@ export default function MultiplayerDrawingScreen({ route, navigation }) {
     setIsSubmitting(true);
 
     try {
-      let base64 = base64Data;
-
-      // Try to capture the canvas directly
-      if (!base64 && canvasRef.current) {
-        try {
-          base64 = await canvasRef.current.toBase64('png', 1.0);
-        } catch (_captureError) {
-          console.warn('Manual submit: canvas capture failed, using fallback');
-        }
-      }
-
-      // Fall back to last saved canvas data
-      if ((!base64 || base64.length < 100) && lastCanvasDataRef.current) {
-        base64 = lastCanvasDataRef.current;
-      }
+      // Use provided data or capture from canvas using our synchronized helper
+      let base64 = base64Data || (await captureCanvas());
 
       // If still no drawing, use blank white canvas
-      if (!base64 || base64.length < 100) {
-        // Valid 400x400 white PNG
-        const blankWhitePng =
-          'iVBORw0KGgoAAAANSUhEUgAAAZAAAAGQCAIAAAAP3aGbAAAACXBIWXMAAAsTAAALEwEAmpwYAAAAB3RJTUUH6AEGEjkKLQAAAAd0RVh0QXV0aG9yAKmuzEgAAAAMdEVYdERlc2NyaXB0aW9uABMJISMAAAAKdEVYdENvcHlyaWdodACsD8w6AAAADnRFWHRDcmVhdGlvbiB0aW1lADX3DwkAAAAJdEVYdFNvZnR3YXJlAF1w/zoAAAALdEVYdERpc2NsYWltZXIAt8C0jwAAAAh0RVh0V2FybmluZwDAG+aHAAAAB3RFWHRTb3VyY2UA9f+D6wAAAAh0RVh0Q29tbWVudAD2zJa/AAAABnRFWHRUaXRsZQCo7tInAAACEklEQVR4nO3BAQEAAACCIP+vbkhAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACA3wMehQABLq9o0QAAAABJRU5ErkJggg==';
-
+      if (!base64 || base64.length < MIN_VALID_DRAWING_LENGTH) {
         try {
-          const response = await fetch(`data:image/png;base64,${blankWhitePng}`);
+          const response = await fetch(`data:image/png;base64,${BLANK_WHITE_PNG_BASE64}`);
           const blob = await response.blob();
           const drawingRef = storageRef(
             storage,
@@ -659,9 +655,9 @@ export default function MultiplayerDrawingScreen({ route, navigation }) {
 
   // Timer color based on urgency
   const getTimerColor = () => {
-    if (timeRemaining <= 10) return '#e74c3c'; // Red - critical
-    if (timeRemaining <= 30) return '#e67e22'; // Orange - warning
-    return theme.primary; // Purple - normal
+    if (timeRemaining <= 10) return TIMER_COLORS.CRITICAL;
+    if (timeRemaining <= 30) return TIMER_COLORS.WARNING;
+    return theme.primary;
   };
 
   // Main drawing view
@@ -744,8 +740,9 @@ export default function MultiplayerDrawingScreen({ route, navigation }) {
           <EnhancedDrawingCanvas
             ref={canvasRef}
             strokeColor={currentStrokeColor}
-            strokeWidth={isEraser ? 24 : 4}
+            strokeWidth={strokeWidth}
             backgroundColor="#FFFFFF"
+            isEraser={isEraser}
           />
         </View>
 

@@ -171,6 +171,45 @@ sketchoff/
 | `npm run lint` | Run ESLint |
 | `npm run format` | Format code with Prettier |
 | `npm run format:check` | Check code formatting |
+| `npm test` | Run test suite |
+| `npm run test:watch` | Run tests in watch mode |
+| `npm run test:coverage` | Run tests with coverage report |
+
+## 🧪 Testing
+
+The project uses Jest with `jest-expo` for testing. Tests are located in the `__tests__/` directory.
+
+```bash
+# Run all tests
+npm test
+
+# Run tests in watch mode during development
+npm run test:watch
+
+# Generate coverage report
+npm run test:coverage
+```
+
+### Test Structure
+
+```
+__tests__/
+├── __mocks__/              # Mock implementations
+│   ├── asyncStorage.js     # AsyncStorage mock
+│   └── firebase.js         # Firebase mock
+├── components/             # Component tests
+│   ├── RatingCard.test.js
+│   └── TimerProgress.test.js
+└── unit/                   # Unit tests
+    ├── context/
+    │   └── GameContext.test.js
+    ├── data/
+    │   └── topics.test.js
+    └── utils/
+        ├── roomCleanup.test.js
+        ├── roomCode.test.js
+        └── storage.test.js
+```
 
 ## 🔗 Deep Linking
 
@@ -218,9 +257,17 @@ The app uses Firebase security rules to ensure:
 
 See `src/config/firebase.rules.json` and `src/config/storage.rules` for the full rules.
 
+## 🤝 Contributing
+
+Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+
+## 🔒 Security
+
+Found a security vulnerability? Please see [SECURITY.md](SECURITY.md) for responsible disclosure guidelines.
+
 ## 📄 License
 
-This project is private.
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
 ---
 
