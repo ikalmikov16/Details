@@ -11,7 +11,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import DrawingToolbar, { ERASER_COLOR } from '../components/DrawingToolbar';
 import EnhancedDrawingCanvas from '../components/EnhancedDrawingCanvas';
 import { LoadingOverlay, OfflineBanner } from '../components/NetworkStatus';
@@ -19,7 +19,7 @@ import { database, storage } from '../config/firebase';
 import { useTheme } from '../context/ThemeContext';
 import { error as hapticError, success, tapMedium, warning } from '../utils/haptics';
 import { useNetworkStatus } from '../utils/network';
-import { playClockTick, playSuccess } from '../utils/sounds';
+import { playClockTickCountdown, playSuccess, stopClockTick } from '../utils/sounds';
 
 export default function MultiplayerDrawingScreen({ route, navigation }) {
   const { roomCode, playerId, playerName } = route.params;
@@ -92,6 +92,7 @@ export default function MultiplayerDrawingScreen({ route, navigation }) {
         }
 
         if (roomData.status === 'rating') {
+          stopClockTick(); // Stop any playing clock tick sound
           navigation.replace('MultiplayerRating', { roomCode, playerId, playerName });
         }
       },
@@ -121,15 +122,43 @@ export default function MultiplayerDrawingScreen({ route, navigation }) {
     return () => clearInterval(timer);
   }, [timeRemaining, introAnimationDone]);
 
+  // Check if all players have submitted their drawings
+  const checkAllSubmitted = useCallback(async () => {
+    try {
+      const roomRef = ref(database, `rooms/${roomCode}`);
+      const snapshot = await get(roomRef);
+
+      if (snapshot.exists()) {
+        const roomData = snapshot.val();
+        const playersCount = Object.keys(roomData.players || {}).length;
+        const round = roomData.currentRound || 1;
+        const roundDrawings = roomData.drawings?.[`round${round}`] || {};
+        const drawingsCount = Object.keys(roundDrawings).length;
+
+        if (playersCount === drawingsCount) {
+          await update(ref(database, `rooms/${roomCode}`), { status: 'rating' });
+        }
+      }
+    } catch (error) {
+      console.error('Error checking submissions:', error);
+    }
+  }, [roomCode]);
+
   // Handle time up - wrapped in useCallback to avoid stale closures
   const handleTimeUp = useCallback(async () => {
     if (hasSubmitted || isSubmitting) return;
+    if (!isConnected) return;
 
-    if (Platform.OS !== 'web' && canvasRef.current) {
-      const base64 = await canvasRef.current.toBase64('png', 1.0);
-      if (base64) {
-        // Inline the submit logic to avoid circular dependencies
-        try {
+    setIsSubmitting(true);
+
+    try {
+      let downloadURL;
+      let isPlaceholder = false;
+
+      // On native platforms, try to capture the canvas
+      if (Platform.OS !== 'web' && canvasRef.current) {
+        const base64 = await canvasRef.current.toBase64('png', 1.0);
+        if (base64) {
           const dataUrl = `data:image/png;base64,${base64}`;
           const response = await fetch(dataUrl);
           const blob = await response.blob();
@@ -139,51 +168,54 @@ export default function MultiplayerDrawingScreen({ route, navigation }) {
             `drawings/${roomCode}/${playerId}_round${currentRound}.png`
           );
           await uploadBytes(drawingRef, blob, { contentType: 'image/png' });
-          const downloadURL = await getDownloadURL(drawingRef);
-
-          await update(
-            ref(database, `rooms/${roomCode}/drawings/round${currentRound}/${playerId}`),
-            {
-              url: downloadURL,
-              submittedAt: Date.now(),
-            }
-          );
-
-          success();
-          playSuccess();
-        } catch (error) {
-          console.error('Error auto-submitting drawing:', error);
+          downloadURL = await getDownloadURL(drawingRef);
         }
-        return;
       }
-    }
 
-    // Submit placeholder if no drawing
-    if (!isConnected) return;
+      // If no drawing captured (web or empty canvas), submit placeholder
+      if (!downloadURL) {
+        const blankImageDataUrl =
+          'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==';
 
-    try {
-      const blankImageDataUrl =
-        'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==';
+        const response = await fetch(blankImageDataUrl);
+        const blob = await response.blob();
 
-      const response = await fetch(blankImageDataUrl);
-      const blob = await response.blob();
+        const drawingRef = storageRef(
+          storage,
+          `drawings/${roomCode}/${playerId}_round${currentRound}.png`
+        );
+        await uploadBytes(drawingRef, blob, { contentType: 'image/png' });
+        downloadURL = await getDownloadURL(drawingRef);
+        isPlaceholder = true;
+      }
 
-      const drawingRef = storageRef(
-        storage,
-        `drawings/${roomCode}/${playerId}_round${currentRound}.png`
-      );
-      await uploadBytes(drawingRef, blob, { contentType: 'image/png' });
-      const downloadURL = await getDownloadURL(drawingRef);
-
+      // Update database with the drawing
       await update(ref(database, `rooms/${roomCode}/drawings/round${currentRound}/${playerId}`), {
         url: downloadURL,
         submittedAt: Date.now(),
-        isPlaceholder: true,
+        ...(isPlaceholder && { isPlaceholder: true }),
       });
+
+      setHasSubmitted(true);
+      setIsSubmitting(false);
+      success();
+      playSuccess();
+
+      // Check if all players have submitted
+      checkAllSubmitted();
     } catch (error) {
-      console.error('Error submitting placeholder:', error);
+      console.error('Error auto-submitting drawing:', error);
+      setIsSubmitting(false);
     }
-  }, [hasSubmitted, isSubmitting, isConnected, roomCode, playerId, currentRound]);
+  }, [
+    hasSubmitted,
+    isSubmitting,
+    isConnected,
+    roomCode,
+    playerId,
+    currentRound,
+    checkAllSubmitted,
+  ]);
 
   // Handle time up separately
   useEffect(() => {
@@ -199,10 +231,13 @@ export default function MultiplayerDrawingScreen({ route, navigation }) {
     // Feedback at specific time milestones
     if (timeRemaining === 30) {
       warning(); // Light warning at 30 seconds
-    } else if (timeRemaining <= 10 && timeRemaining > 0) {
-      // Clock tick for last 10 seconds
+    } else if (timeRemaining === 10) {
+      // Start clock tick countdown at 10 seconds - plays continuously
       tapMedium();
-      playClockTick();
+      playClockTickCountdown();
+    } else if (timeRemaining === 0) {
+      // Stop clock tick when time runs out
+      stopClockTick();
     }
   }, [timeRemaining, introAnimationDone]);
 
@@ -444,56 +479,10 @@ export default function MultiplayerDrawingScreen({ route, navigation }) {
     );
   };
 
-  const checkAllSubmitted = async () => {
-    try {
-      const roomRef = ref(database, `rooms/${roomCode}`);
-      const snapshot = await get(roomRef);
-
-      if (snapshot.exists()) {
-        const roomData = snapshot.val();
-        const playersCount = Object.keys(roomData.players || {}).length;
-        const round = roomData.currentRound || 1;
-        const roundDrawings = roomData.drawings?.[`round${round}`] || {};
-        const drawingsCount = Object.keys(roundDrawings).length;
-
-        if (playersCount === drawingsCount) {
-          await update(ref(database, `rooms/${roomCode}`), { status: 'rating' });
-        }
-      }
-    } catch (error) {
-      console.error('Error checking submissions:', error);
-    }
-  };
-
-  // Web not supported view
-  if (Platform.OS === 'web') {
-    return (
-      <View style={[styles.container, { backgroundColor: theme.background }]}>
-        <OfflineBanner visible={!isConnected} />
-        <View style={styles.webNotSupported}>
-          <Text style={styles.webNotSupportedIcon}>🎨</Text>
-          <Text style={[styles.webNotSupportedTitle, { color: theme.text }]}>
-            Drawing Not Available on Web
-          </Text>
-          <Text style={[styles.webNotSupportedText, { color: theme.textSecondary }]}>
-            Please use the mobile app (iOS/Android) to draw.
-          </Text>
-          <TouchableOpacity
-            style={[styles.webSkipButton, { backgroundColor: theme.primary }]}
-            onPress={handleSkipDrawing}
-            disabled={!isConnected || isSubmitting}
-          >
-            <Text style={styles.webSkipButtonText}>⏭️ Skip Round</Text>
-          </TouchableOpacity>
-        </View>
-      </View>
-    );
-  }
-
-  // Submitted waiting view
+  // Submitted waiting view (check this first so it works on all platforms including web)
   if (hasSubmitted) {
     return (
-      <View style={[styles.container, { backgroundColor: theme.background }]}>
+      <SafeAreaView style={[styles.container, { backgroundColor: theme.background }]}>
         <View style={[styles.waitingContainer, { backgroundColor: theme.cardBackground }]}>
           <Text style={styles.waitingIcon}>✅</Text>
           <Text style={[styles.waitingTitle, { color: theme.success }]}>Drawing Submitted!</Text>
@@ -531,14 +520,14 @@ export default function MultiplayerDrawingScreen({ route, navigation }) {
             })}
           </ScrollView>
         </View>
-      </View>
+      </SafeAreaView>
     );
   }
 
   // Time's up view
   if (timeRemaining === 0) {
     return (
-      <View style={[styles.container, { backgroundColor: theme.background }]}>
+      <SafeAreaView style={[styles.container, { backgroundColor: theme.background }]}>
         <View style={[styles.timeUpContainer, { backgroundColor: theme.cardBackground }]}>
           <Text style={styles.timeUpIcon}>⏰</Text>
           <Text style={[styles.timeUpTitle, { color: theme.warning }]}>Time&apos;s Up!</Text>
@@ -546,7 +535,34 @@ export default function MultiplayerDrawingScreen({ route, navigation }) {
             Submitting your drawing...
           </Text>
         </View>
-      </View>
+      </SafeAreaView>
+    );
+  }
+
+  // Web not supported view (after hasSubmitted check so waiting view shows after skip)
+  if (Platform.OS === 'web') {
+    return (
+      <SafeAreaView style={[styles.container, { backgroundColor: theme.background }]}>
+        <OfflineBanner visible={!isConnected} />
+        <View style={styles.webNotSupported}>
+          <Text style={styles.webNotSupportedIcon}>🎨</Text>
+          <Text style={[styles.webNotSupportedTitle, { color: theme.text }]}>
+            Drawing Not Available on Web
+          </Text>
+          <Text style={[styles.webNotSupportedText, { color: theme.textSecondary }]}>
+            Please use the mobile app (iOS/Android) to draw.
+          </Text>
+          <TouchableOpacity
+            style={[styles.webSkipButton, { backgroundColor: theme.primary }]}
+            onPress={handleSkipDrawing}
+            disabled={!isConnected || isSubmitting}
+          >
+            <Text style={styles.webSkipButtonText}>
+              {isSubmitting ? 'Submitting...' : '⏭️ Skip Round'}
+            </Text>
+          </TouchableOpacity>
+        </View>
+      </SafeAreaView>
     );
   }
 

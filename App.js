@@ -42,7 +42,7 @@ export default function App() {
   // Deep linking configuration for NavigationContainer
   const linking = useMemo(
     () => ({
-      prefixes: [prefix, 'details://'],
+      prefixes: [prefix, 'sketchoff://'],
       config: {
         screens: {
           RoomJoin: {

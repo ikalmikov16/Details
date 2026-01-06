@@ -116,9 +116,26 @@ export function playSuccess() {
   playSound('success', 0.6);
 }
 
-// Clock tick for last 10 seconds countdown - plays one tick
-export function playClockTick() {
-  playSound('clockTick', 0.6, 900);
+// Clock tick for last 10 seconds countdown - plays for specified duration
+export function playClockTick(durationMs = 900) {
+  playSound('clockTick', 0.6, durationMs);
+}
+
+// Play clock tick countdown for the last 10 seconds (plays first 10 seconds of the sound)
+export function playClockTickCountdown() {
+  playSound('clockTick', 0.6, 10000); // Play for 10 seconds
+}
+
+// Stop the clock tick sound
+export function stopClockTick() {
+  try {
+    const player = players.clockTick;
+    if (player) {
+      player.pause();
+    }
+  } catch (_e) {
+    // Ignore errors
+  }
 }
 
 // Round complete chime

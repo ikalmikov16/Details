@@ -3,6 +3,7 @@ import React, { useEffect, useState } from 'react';
 import {
   Alert,
   Modal,
+  Platform,
   ScrollView,
   StyleSheet,
   Text,
@@ -132,53 +133,63 @@ export default function LobbyScreen({ route, navigation }) {
     }
   };
 
-  const handleLeaveGame = () => {
+  const handleLeaveGame = async () => {
     warning(); // Haptic feedback for warning action
 
     const otherPlayers = players.filter((p) => p.id !== playerId);
     const willTransferHost = isHost && otherPlayers.length > 0;
 
-    Alert.alert(
-      'Leave Game',
+    const message =
       isHost && otherPlayers.length === 0
         ? 'You are the only player. Leaving will close the room. Are you sure?'
         : isHost
           ? `Leaving will make ${otherPlayers[0]?.name} the new host. Are you sure?`
-          : 'Are you sure you want to leave this game?',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Leave',
-          style: 'destructive',
-          onPress: async () => {
-            setIsLeaving(true);
-            try {
-              if (isHost && otherPlayers.length === 0) {
-                // Host is the last player - delete the entire room
-                await remove(ref(database, `rooms/${roomCode}`));
-              } else if (willTransferHost) {
-                // Host leaving with other players - transfer host to next player
-                const newHost = otherPlayers[0];
-                await update(ref(database, `rooms/${roomCode}`), {
-                  hostId: newHost.id,
-                });
-                // Remove the leaving host from players
-                await remove(ref(database, `rooms/${roomCode}/players/${playerId}`));
-              } else {
-                // Regular player leaving - just remove themselves
-                await remove(ref(database, `rooms/${roomCode}/players/${playerId}`));
-              }
-              navigation.replace('Welcome');
-            } catch (error) {
-              console.error('Error leaving game:', error);
-              hapticError();
-              Alert.alert('Error', 'Failed to leave game. Please try again.');
-              setIsLeaving(false);
-            }
-          },
-        },
-      ]
-    );
+          : 'Are you sure you want to leave this game?';
+
+    // Use window.confirm on web since Alert.alert doesn't work properly
+    let confirmed = false;
+    if (Platform.OS === 'web') {
+      confirmed = window.confirm(message);
+    } else {
+      // On native, use Alert.alert with Promise wrapper
+      confirmed = await new Promise((resolve) => {
+        Alert.alert('Leave Game', message, [
+          { text: 'Cancel', style: 'cancel', onPress: () => resolve(false) },
+          { text: 'Leave', style: 'destructive', onPress: () => resolve(true) },
+        ]);
+      });
+    }
+
+    if (!confirmed) return;
+
+    setIsLeaving(true);
+    try {
+      if (isHost && otherPlayers.length === 0) {
+        // Host is the last player - delete the entire room
+        await remove(ref(database, `rooms/${roomCode}`));
+      } else if (willTransferHost) {
+        // Host leaving with other players - transfer host to next player
+        const newHost = otherPlayers[0];
+        await update(ref(database, `rooms/${roomCode}`), {
+          hostId: newHost.id,
+        });
+        // Remove the leaving host from players
+        await remove(ref(database, `rooms/${roomCode}/players/${playerId}`));
+      } else {
+        // Regular player leaving - just remove themselves
+        await remove(ref(database, `rooms/${roomCode}/players/${playerId}`));
+      }
+      navigation.replace('Welcome');
+    } catch (error) {
+      console.error('Error leaving game:', error);
+      hapticError();
+      if (Platform.OS === 'web') {
+        window.alert('Failed to leave game. Please try again.');
+      } else {
+        Alert.alert('Error', 'Failed to leave game. Please try again.');
+      }
+      setIsLeaving(false);
+    }
   };
 
   const handleShareCode = async () => {
@@ -186,31 +197,39 @@ export default function LobbyScreen({ route, navigation }) {
     await shareRoomCode(roomCode);
   };
 
-  const handleKickPlayer = (playerToKick) => {
+  const handleKickPlayer = async (playerToKick) => {
     if (!isHost || playerToKick.isHost) return;
 
     warning();
-    Alert.alert(
-      'Remove Player',
-      `Are you sure you want to remove ${playerToKick.name} from the game?`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Remove',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              await remove(ref(database, `rooms/${roomCode}/players/${playerToKick.id}`));
-              success();
-            } catch (error) {
-              console.error('Error kicking player:', error);
-              hapticError();
-              Alert.alert('Error', 'Failed to remove player. Please try again.');
-            }
-          },
-        },
-      ]
-    );
+
+    const message = `Are you sure you want to remove ${playerToKick.name} from the game?`;
+
+    let confirmed = false;
+    if (Platform.OS === 'web') {
+      confirmed = window.confirm(message);
+    } else {
+      confirmed = await new Promise((resolve) => {
+        Alert.alert('Remove Player', message, [
+          { text: 'Cancel', style: 'cancel', onPress: () => resolve(false) },
+          { text: 'Remove', style: 'destructive', onPress: () => resolve(true) },
+        ]);
+      });
+    }
+
+    if (!confirmed) return;
+
+    try {
+      await remove(ref(database, `rooms/${roomCode}/players/${playerToKick.id}`));
+      success();
+    } catch (error) {
+      console.error('Error kicking player:', error);
+      hapticError();
+      if (Platform.OS === 'web') {
+        window.alert('Failed to remove player. Please try again.');
+      } else {
+        Alert.alert('Error', 'Failed to remove player. Please try again.');
+      }
+    }
   };
 
   const handleUpdateName = async () => {
@@ -316,7 +335,7 @@ export default function LobbyScreen({ route, navigation }) {
             {/* QR Code centered */}
             <View style={styles.qrWrapper}>
               <QRCode
-                value={`details://join/${roomCode}`}
+                value={`sketchoff://join/${roomCode}`}
                 size={100}
                 backgroundColor="transparent"
                 color="#fff"

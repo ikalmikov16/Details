@@ -8,7 +8,7 @@ export async function isSharingAvailable() {
 }
 
 // Share text content (room codes, messages)
-export async function shareText(message, title = 'Drawing Game') {
+export async function shareText(message, title = 'SketchOff') {
   try {
     if (Platform.OS === 'web') {
       // Web uses navigator.share or clipboard
@@ -35,8 +35,8 @@ export async function shareText(message, title = 'Drawing Game') {
 
 // Share room code with a formatted message
 export async function shareRoomCode(roomCode) {
-  const message = `🎨 Join my Drawing Game!\n\nRoom Code: ${roomCode}\n\nDownload the app and enter this code to play with me!`;
-  return shareText(message, 'Join My Drawing Game');
+  const message = `🎨 Join my SketchOff game!\n\nRoom Code: ${roomCode}\n\nDownload SketchOff and enter this code to play with me!`;
+  return shareText(message, 'Join My SketchOff Game');
 }
 
 // Capture a view as an image and share it
@@ -72,7 +72,7 @@ export async function captureAndShare(viewRef, options = {}) {
 export async function shareResultsAsText(players, numRounds, isMultiplayer = false) {
   const sortedPlayers = [...players].sort((a, b) => b.totalScore - a.totalScore);
 
-  let message = `🎨 Drawing Game Results!\n\n`;
+  let message = `🎨 SketchOff Results!\n\n`;
   message += `🏆 Final Standings:\n`;
 
   sortedPlayers.forEach((player, index) => {
@@ -82,7 +82,7 @@ export async function shareResultsAsText(players, numRounds, isMultiplayer = fal
 
   message += `\n📊 ${numRounds} rounds played`;
   message += isMultiplayer ? ' • Multiplayer' : ' • Single Device';
-  message += `\n\n🎮 Play Drawing Game!`;
+  message += `\n\n🎮 Play SketchOff!`;
 
-  return shareText(message, 'Drawing Game Results');
+  return shareText(message, 'SketchOff Results');
 }

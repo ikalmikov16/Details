@@ -66,7 +66,7 @@ export default function WelcomeScreen({ navigation }) {
 
           <View style={styles.titleContainer}>
             <Text style={styles.title}>🎨</Text>
-            <Text style={[styles.titleText, { color: theme.text }]}>Drawing Game</Text>
+            <Text style={[styles.titleText, { color: theme.text }]}>SketchOff</Text>
             <View
               style={[
                 styles.subtitleBadge,
