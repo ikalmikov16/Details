@@ -37,8 +37,14 @@ export default function RoomCreateScreen({ navigation }) {
       return;
     }
 
-    if (playerName.trim() === '') {
+    const trimmedName = playerName.trim();
+    if (trimmedName === '') {
       Alert.alert('Error', 'Please enter your name');
+      return;
+    }
+
+    if (trimmedName.length > 20) {
+      Alert.alert('Name Too Long', 'Name must be 20 characters or less.');
       return;
     }
 
@@ -92,7 +98,7 @@ export default function RoomCreateScreen({ navigation }) {
           players: {
             [playerId]: {
               id: playerId,
-              name: playerName.trim(),
+              name: trimmedName,
               totalScore: 0,
               roundScore: 0,
             },
@@ -115,7 +121,7 @@ export default function RoomCreateScreen({ navigation }) {
       navigation.replace('Lobby', {
         roomCode,
         playerId,
-        playerName: playerName.trim(),
+        playerName: trimmedName,
       });
     } catch (error) {
       console.error('Error creating room:', error);

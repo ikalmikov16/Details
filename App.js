@@ -3,14 +3,18 @@ import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import * as Linking from 'expo-linking';
 import React, { useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, LogBox, Text, View } from 'react-native';
-
-// Suppress Expo Go media library warning (only affects Expo Go, not production builds)
-LogBox.ignoreLogs(['Due to changes in Androids permission requirements']);
+import ErrorBoundary from './src/components/ErrorBoundary';
 import { signInAnonymouslyIfNeeded } from './src/config/firebase';
 import { GameProvider } from './src/context/GameContext';
 import { ThemeProvider } from './src/context/ThemeContext';
+import ConsentScreen from './src/screens/ConsentScreen';
+import { initTopicService } from './src/services/TopicService';
 import { runCleanupTasks } from './src/utils/roomCleanup';
 import { initSounds } from './src/utils/sounds';
+import { hasUserConsent } from './src/utils/storage';
+
+// Suppress Expo Go media library warning (only affects Expo Go, not production builds)
+LogBox.ignoreLogs(['Due to changes in Androids permission requirements']);
 
 // Single Phone Mode Screens
 import FinalResultsScreen from './src/screens/FinalResultsScreen';
@@ -38,6 +42,7 @@ const prefix = Linking.createURL('/');
 export default function App() {
   const [isAuthReady, setIsAuthReady] = useState(false);
   const [authError, setAuthError] = useState(null);
+  const [hasConsent, setHasConsent] = useState(null); // null = checking, true/false = result
 
   // Deep linking configuration for NavigationContainer
   const linking = useMemo(
@@ -61,16 +66,27 @@ export default function App() {
     // Initialize sound system
     initSounds();
 
+    // Check user consent status first
+    hasUserConsent().then((consentGiven) => {
+      setHasConsent(consentGiven);
+    });
+
     // Initialize anonymous authentication on app start
     signInAnonymouslyIfNeeded()
       .then(() => {
         setIsAuthReady(true);
 
-        // Run cleanup tasks in background after auth is ready
-        // This cleans up stale rooms and old archives to save database space
-        runCleanupTasks().catch((error) => {
-          console.warn('Cleanup tasks failed:', error);
-        });
+        // Run background initialization tasks after auth is ready
+        Promise.all([
+          // Load topics from Firebase (with local cache fallback)
+          initTopicService().catch((error) => {
+            console.warn('Topic service init failed:', error);
+          }),
+          // Clean up stale rooms and old archives to save database space
+          runCleanupTasks().catch((error) => {
+            console.warn('Cleanup tasks failed:', error);
+          }),
+        ]);
       })
       .catch((error) => {
         console.error('Auth initialization failed:', error);
@@ -80,8 +96,13 @@ export default function App() {
       });
   }, []);
 
-  // Show loading screen while authenticating
-  if (!isAuthReady) {
+  // Handle consent being given from ConsentScreen
+  const handleConsentGiven = () => {
+    setHasConsent(true);
+  };
+
+  // Show loading screen while checking auth and consent
+  if (!isAuthReady || hasConsent === null) {
     return (
       <View
         style={{
@@ -97,109 +118,128 @@ export default function App() {
     );
   }
 
+  // Show consent screen if user hasn't accepted privacy policy yet
+  if (!hasConsent) {
+    return (
+      <ThemeProvider>
+        <ConsentScreen onConsentGiven={handleConsentGiven} />
+      </ThemeProvider>
+    );
+  }
+
   return (
-    <ThemeProvider>
-      <GameProvider>
-        <NavigationContainer linking={linking}>
-          <Stack.Navigator
-            initialRouteName="Welcome"
-            screenOptions={{
-              headerStyle: {
-                backgroundColor: '#6366f1',
-              },
-              headerTintColor: '#fff',
-              headerTitleStyle: {
-                fontWeight: 'bold',
-              },
-              headerShadowVisible: false, // Removes the border/shadow line
-            }}
-          >
-            {/* Main Welcome */}
-            <Stack.Screen
-              name="Welcome"
-              component={WelcomeScreen}
-              options={{
-                headerShown: false,
+    <ErrorBoundary>
+      <ThemeProvider>
+        <GameProvider>
+          <NavigationContainer linking={linking}>
+            <Stack.Navigator
+              initialRouteName="Welcome"
+              screenOptions={{
+                headerStyle: {
+                  backgroundColor: '#6366f1',
+                },
+                headerTintColor: '#fff',
+                headerTitleStyle: {
+                  fontWeight: 'bold',
+                },
+                headerShadowVisible: false, // Removes the border/shadow line
               }}
-            />
+            >
+              {/* Main Welcome */}
+              <Stack.Screen
+                name="Welcome"
+                component={WelcomeScreen}
+                options={{
+                  headerShown: false,
+                }}
+              />
 
-            {/* Stats */}
-            <Stack.Screen name="Stats" component={StatsScreen} options={{ title: 'Your Stats' }} />
+              {/* Stats */}
+              <Stack.Screen
+                name="Stats"
+                component={StatsScreen}
+                options={{ title: 'Your Stats' }}
+              />
 
-            {/* Single Phone Mode */}
-            <Stack.Screen name="Setup" component={SetupScreen} options={{ title: 'Game Setup' }} />
-            <Stack.Screen name="Topic" component={TopicScreen} options={{ title: 'Draw!' }} />
-            <Stack.Screen
-              name="Rating"
-              component={RatingScreen}
-              options={{ title: 'Rate Drawings' }}
-            />
-            <Stack.Screen
-              name="RoundResults"
-              component={RoundResultsScreen}
-              options={{ title: 'Round Results' }}
-            />
-            <Stack.Screen
-              name="FinalResults"
-              component={FinalResultsScreen}
-              options={{ title: 'Final Results' }}
-            />
+              {/* Single Phone Mode */}
+              <Stack.Screen
+                name="Setup"
+                component={SetupScreen}
+                options={{ title: 'Game Setup' }}
+              />
+              <Stack.Screen name="Topic" component={TopicScreen} options={{ title: 'Draw!' }} />
+              <Stack.Screen
+                name="Rating"
+                component={RatingScreen}
+                options={{ title: 'Rate Drawings' }}
+              />
+              <Stack.Screen
+                name="RoundResults"
+                component={RoundResultsScreen}
+                options={{ title: 'Round Results' }}
+              />
+              <Stack.Screen
+                name="FinalResults"
+                component={FinalResultsScreen}
+                options={{ title: 'Final Results' }}
+              />
 
-            {/* Multiplayer Mode */}
-            <Stack.Screen
-              name="RoomCreate"
-              component={RoomCreateScreen}
-              options={{ title: 'Create Room' }}
-            />
-            <Stack.Screen
-              name="RoomJoin"
-              component={RoomJoinScreen}
-              options={{ title: 'Join Room' }}
-            />
-            <Stack.Screen
-              name="Lobby"
-              component={LobbyScreen}
-              options={{
-                headerShown: false,
-                gestureEnabled: false,
-              }}
-            />
-            <Stack.Screen
-              name="MultiplayerDrawing"
-              component={MultiplayerDrawingScreen}
-              options={{
-                headerShown: false,
-                gestureEnabled: false,
-              }}
-            />
-            <Stack.Screen
-              name="MultiplayerRating"
-              component={MultiplayerRatingScreen}
-              options={{
-                title: 'Rate Drawings',
-                headerBackVisible: false,
-                headerLeft: () => null,
-                gestureEnabled: false,
-              }}
-            />
-            <Stack.Screen
-              name="MultiplayerResults"
-              component={MultiplayerResultsScreen}
-              options={{
-                title: 'Round Results',
-                headerBackVisible: false,
-                headerLeft: () => null,
-                gestureEnabled: false,
-              }}
-            />
-            <Stack.Screen
-              name="MultiplayerFinal"
-              component={MultiplayerFinalScreen}
-              options={{ title: 'Final Results' }}
-            />
-          </Stack.Navigator>
-        </NavigationContainer>
-      </GameProvider>
-    </ThemeProvider>
+              {/* Multiplayer Mode */}
+              <Stack.Screen
+                name="RoomCreate"
+                component={RoomCreateScreen}
+                options={{ title: 'Create Room' }}
+              />
+              <Stack.Screen
+                name="RoomJoin"
+                component={RoomJoinScreen}
+                options={{ title: 'Join Room' }}
+              />
+              <Stack.Screen
+                name="Lobby"
+                component={LobbyScreen}
+                options={{
+                  headerShown: false,
+                  gestureEnabled: false,
+                }}
+              />
+              <Stack.Screen
+                name="MultiplayerDrawing"
+                component={MultiplayerDrawingScreen}
+                options={{
+                  headerShown: false,
+                  gestureEnabled: false,
+                }}
+              />
+              <Stack.Screen
+                name="MultiplayerRating"
+                component={MultiplayerRatingScreen}
+                options={{
+                  title: 'Rate Drawings',
+                  headerBackVisible: false,
+                  headerLeft: () => null,
+                  gestureEnabled: false,
+                }}
+              />
+              <Stack.Screen
+                name="MultiplayerResults"
+                component={MultiplayerResultsScreen}
+                options={{
+                  title: 'Round Results',
+                  headerBackVisible: false,
+                  headerLeft: () => null,
+                  gestureEnabled: false,
+                }}
+              />
+              <Stack.Screen
+                name="MultiplayerFinal"
+                component={MultiplayerFinalScreen}
+                options={{ title: 'Final Results' }}
+              />
+            </Stack.Navigator>
+          </NavigationContainer>
+        </GameProvider>
+      </ThemeProvider>
+    </ErrorBoundary>
   );
 }

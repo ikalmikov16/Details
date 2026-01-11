@@ -1,136 +1,182 @@
-export const topics = [
-  // Animals (15)
-  'A Cat Wearing a Hat',
-  'A Dancing Elephant',
-  'A Penguin on Vacation',
-  'A Dog Astronaut',
-  'A Sleeping Dragon',
-  'A Fish Riding a Bicycle',
-  'An Owl Reading a Book',
-  'A Giraffe in a Sweater',
-  'A Bear Having a Picnic',
-  'A Rabbit Magician',
-  'A Shark with a Mustache',
-  'A Squirrel Hoarding Pizza',
-  'A Koala DJ',
-  'A Flamingo Ballet Dancer',
-  'A Hedgehog in Roller Skates',
+/**
+ * Fallback topics used when Firebase is unavailable or hasn't loaded yet.
+ * These are also used to seed Firebase initially.
+ *
+ * Topics are organized by theme for easy management.
+ * The TopicService flattens these for random selection.
+ */
 
-  // Fantasy & Imagination (15)
-  'A House on Clouds',
-  'A Robot Eating Ice Cream',
-  'An Alien Playing Guitar',
-  'A Flying Car',
-  'A Tree with Doors',
-  'A Castle Made of Candy',
-  'A Wizard Cooking',
-  'A Mermaid on a Skateboard',
-  'A Unicorn Barista',
-  'A Ghost Trying to Make Friends',
-  'A Fairy Fixing a Computer',
-  'A Giant Friendly Monster',
-  'A Portal to Another World',
-  'A Dragon Afraid of Fire',
-  'A Time-Traveling Snail',
+export const FALLBACK_THEMES = {
+  everydayObjects: {
+    name: 'Everyday Objects',
+    emoji: '🧺',
+    topics: [
+      'A Coffee Mug',
+      'A Chair',
+      'A Pair of Glasses',
+      'A Backpack',
+      'A Phone',
+      'A Shoe',
+      'A Set of Keys',
+      'A Lamp',
+      'A Toothbrush',
+      'A Clock',
+    ],
+  },
 
-  // Food (12)
-  'Pizza with a Face',
-  'Dancing Vegetables',
-  'A Taco Party',
-  'A Hamburger Superhero',
-  'Angry Spaghetti',
-  'A Happy Cupcake',
-  'Breakfast at Sunrise',
-  'A Donut Police Officer',
-  'Sushi Samurai',
-  'An Avocado at the Gym',
-  'Ice Cream Melting Dramatically',
-  'A Cookie Breaking Up with Milk',
+  animals: {
+    name: 'Animals',
+    emoji: '🐾',
+    topics: [
+      'A Cat',
+      'A Dog',
+      'A Bird',
+      'A Fish',
+      'A Turtle',
+      'A Frog',
+      'An Owl',
+      'A Bear',
+      'A Penguin',
+      'A Horse',
+    ],
+  },
 
-  // Objects & Scenes (15)
-  'A Phone from the Future',
-  'Your Dream Vacation',
-  'A Rainy Day Indoors',
-  "A Superhero's Lair",
-  'A Haunted House',
-  'A Beach at Sunset',
-  'A Mountain with a Face',
-  'A Car with Wings',
-  'A Lamp That Grants Wishes',
-  'A Cozy Reading Nook',
-  'A Treehouse City',
-  'An Underwater Restaurant',
-  'A Rocket Ship Bedroom',
-  'A Garden at Midnight',
-  'A Library in Space',
+  food: {
+    name: 'Food',
+    emoji: '🍔',
+    topics: [
+      'A Cheeseburger',
+      'A Slice of Pizza',
+      'An Ice Cream Cone',
+      'A Taco',
+      'A Donut',
+      'A Sandwich',
+      'A Cupcake',
+      'A Banana',
+      'A Bowl of Noodles',
+      'A Stack of Pancakes',
+    ],
+  },
 
-  // Actions & Scenarios (15)
-  'Someone Jumping Over a Puddle',
-  'A Monster Under the Bed',
-  'A Person Discovering Treasure',
-  'Someone Trying to Catch a Butterfly',
-  'A Detective Solving a Mystery',
-  'A Chef in a Food Fight',
-  'Someone Walking Their Pet Rock',
-  'A Pirate Finding a Treasure Map',
-  'An Explorer in a Jungle',
-  'Someone Making a Wish on a Star',
-  'A Ninja Doing Grocery Shopping',
-  'A Cowboy Riding a Giant Chicken',
-  'Someone Building a Sandcastle',
-  'A Scientist with a Crazy Invention',
-  'A Musician in a Band of Animals',
+  thingsWithFaces: {
+    name: 'Things With Faces',
+    emoji: '😄',
+    topics: [
+      'A Happy Sun',
+      'A Sad Cloud',
+      'A Grumpy Phone',
+      'A Smiling House',
+      'An Angry Alarm Clock',
+      'A Nervous Backpack',
+      'A Sleepy Moon',
+      'A Laughing Car',
+      'A Scared Shoe',
+      'A Confused TV',
+    ],
+  },
 
-  // Abstract & Feelings (12)
-  'What Happiness Looks Like',
-  'Your Biggest Fear',
-  'A Musical Note',
-  'What Monday Feels Like',
-  'The Feeling of Winning',
-  'Time Travel',
-  'A Dream You Remember',
-  'What Friendship Looks Like',
-  'The Taste of Your Favorite Food',
-  'What Silence Sounds Like',
-  'The Feeling of a Warm Hug',
-  'What Adventure Feels Like',
+  peopleDoingThings: {
+    name: 'People Doing Things',
+    emoji: '🏃',
+    topics: [
+      'Someone Running Late',
+      'Someone Dancing',
+      'Someone Sleeping',
+      'Someone Lifting Something Heavy',
+      'Someone Eating Messily',
+      'Someone Falling Over',
+      'Someone Taking a Selfie',
+      'Someone Studying',
+      'Someone Celebrating',
+      'Someone Waiting in Line',
+    ],
+  },
 
-  // Silly & Random (16)
-  'A Potato with Legs',
-  'A Cactus Needing a Hug',
-  'A Cloud Having a Bad Hair Day',
-  'A Banana Slipping on a Human',
-  'A Sock That Lost Its Pair',
-  'A Pencil Running a Marathon',
-  'A Chair on Vacation',
-  'A Coffee Cup Before 8am',
-  'A Moon Wearing Sunglasses',
-  'A Volcano Sneezing',
-  'A Book Reading a Human',
-  'Stairs Going Nowhere',
-  'A Door That Leads to Yesterday',
-  'A Shoe with Stage Fright',
-  'A Clock That Hates Mornings',
-  'An Umbrella Afraid of Rain',
-];
+  brokenThings: {
+    name: 'Broken Things',
+    emoji: '💥',
+    topics: [
+      'A Phone That Won’t Turn On',
+      'A Car That Won’t Start',
+      'A Computer With an Error Screen',
+      'A Leaking Water Bottle',
+      'A Cracked Mirror',
+      'A Snapped Pencil',
+      'A TV With No Signal',
+      'A Chair Missing a Leg',
+      'A Watch That Is Stuck',
+      'A Jammed Door',
+    ],
+  },
 
-// Track last used topic to avoid repeats
-let lastTopic = '';
+  tinyVsGiant: {
+    name: 'Tiny vs Giant',
+    emoji: '🐜',
+    topics: [
+      'A Tiny Person and a Giant Coffee Cup',
+      'A Tiny Dog and a Giant Cat',
+      'A Tiny House and a Giant Tree',
+      'A Tiny Phone and a Giant Hand',
+      'A Tiny Car and a Giant Pothole',
+      'A Tiny Chef and a Giant Burger',
+      'A Tiny Boat and a Giant Wave',
+      'A Tiny Backpack and a Giant Book',
+      'A Tiny Kid and a Giant Slide',
+      'A Tiny Mouse and a Giant Cheese',
+    ],
+  },
 
-// Get a random topic that's different from the last one
-export const getRandomTopic = () => {
-  let newTopic;
-  do {
-    const randomIndex = Math.floor(Math.random() * topics.length);
-    newTopic = topics[randomIndex];
-  } while (newTopic === lastTopic && topics.length > 1);
+  sillyCombinations: {
+    name: 'Silly Combinations',
+    emoji: '🤪',
+    topics: [
+      'A Banana With Wheels',
+      'A Fish With Legs',
+      'A Pizza With Arms',
+      'A Backpack With Eyes',
+      'A Cat That Is Also a Loaf of Bread',
+      'A Shoe With Teeth',
+      'A Clock That Is Also a Donut',
+      'A Tree Made of Candy',
+      'A Car That Is Also a Bed',
+      'A Cloud Wearing Shoes',
+    ],
+  },
 
-  lastTopic = newTopic;
-  return newTopic;
+  oneWeirdRule: {
+    name: 'One Weird Rule',
+    emoji: '🚫',
+    topics: [
+      'Draw a House Without Using Any Straight Lines',
+      'Draw a Cat Using Only Circles',
+      'Draw a Face Without Drawing Eyes',
+      'Draw a Tree Using Only Straight Lines',
+      'Draw a Car Without Lifting Your Finger',
+      'Draw a Person Using Only Squares',
+      'Draw a Sun Without Using Yellow',
+      'Draw a Fish Using Only Three Shapes',
+      'Draw a Phone Without Drawing a Rectangle',
+      'Draw a Smile Using Only Dots',
+    ],
+  },
+
+  dream: {
+    name: 'Dream ___',
+    emoji: '🌈',
+    topics: [
+      'Your Dream House',
+      'Your Dream Vacation',
+      'Your Dream Bedroom',
+      'Your Dream Pet',
+      'Your Dream Job',
+      'Your Dream Car',
+      'Your Dream City',
+      'Your Dream Island',
+      'Your Dream Restaurant',
+      'Your Dream Weekend',
+    ],
+  },
 };
 
-// Get multiple unique random topics
-export const getRandomTopics = (count = 3) => {
-  const shuffled = [...topics].sort(() => Math.random() - 0.5);
-  return shuffled.slice(0, Math.min(count, topics.length));
-};
+// Flatten all themes into a single array for easy random selection
+export const FALLBACK_TOPICS = Object.values(FALLBACK_THEMES).flatMap((theme) => theme.topics);

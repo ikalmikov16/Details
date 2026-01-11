@@ -1,9 +1,17 @@
-import React, { useCallback, useEffect, useState } from 'react';
-import { Alert, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import {
+  Alert,
+  AppState,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+} from 'react-native';
 import TimerProgress from '../components/TimerProgress';
 import { useGame } from '../context/GameContext';
 import { useTheme } from '../context/ThemeContext';
-import { getRandomTopic } from '../data/topics';
+import { getRandomTopic } from '../services/TopicService';
 import { tapHeavy, tapLight, tapMedium, warning } from '../utils/haptics';
 
 export default function TopicScreen({ navigation }) {
@@ -12,9 +20,13 @@ export default function TopicScreen({ navigation }) {
   const [isTimerRunning, setIsTimerRunning] = useState(false);
   const [timeRemaining, setTimeRemaining] = useState(timeLimit);
 
+  // Store the end time for accurate time sync (even after backgrounding)
+  const timerEndTimeRef = useRef(null);
+
   // Define handleTimerEnd first so it can be used in useEffect
   const handleTimerEnd = useCallback(() => {
     setIsTimerRunning(false);
+    timerEndTimeRef.current = null;
 
     Alert.alert("⏰ Time's Up!", "Drawing time is over! Now it's time to rate the drawings.", [
       {
@@ -32,11 +44,19 @@ export default function TopicScreen({ navigation }) {
     }
   }, [currentTopic, setCurrentTopic]);
 
+  // Timer effect using timestamp-based calculation
   useEffect(() => {
     let interval;
     if (isTimerRunning && timeRemaining > 0) {
       interval = setInterval(() => {
-        setTimeRemaining((prev) => prev - 1);
+        if (timerEndTimeRef.current) {
+          // Calculate time based on actual end time for accuracy
+          const remaining = Math.max(0, Math.ceil((timerEndTimeRef.current - Date.now()) / 1000));
+          setTimeRemaining(remaining);
+        } else {
+          // Fallback to decrement
+          setTimeRemaining((prev) => prev - 1);
+        }
       }, 1000);
     } else if (timeRemaining === 0 && isTimerRunning) {
       handleTimerEnd();
@@ -44,8 +64,23 @@ export default function TopicScreen({ navigation }) {
     return () => clearInterval(interval);
   }, [isTimerRunning, timeRemaining, handleTimerEnd]);
 
+  // Handle app state changes (backgrounding/foregrounding)
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (nextAppState) => {
+      if (nextAppState === 'active' && timerEndTimeRef.current && isTimerRunning) {
+        // App came back to foreground - recalculate time based on end time
+        const remaining = Math.max(0, Math.ceil((timerEndTimeRef.current - Date.now()) / 1000));
+        setTimeRemaining(remaining);
+      }
+    });
+
+    return () => subscription.remove();
+  }, [isTimerRunning]);
+
   const handleStartTimer = () => {
     tapHeavy(); // Strong haptic feedback for starting
+    // Store the end time when timer starts
+    timerEndTimeRef.current = Date.now() + timeLimit * 1000;
     setIsTimerRunning(true);
   };
 
@@ -64,6 +99,7 @@ export default function TopicScreen({ navigation }) {
         text: 'Skip',
         onPress: () => {
           setIsTimerRunning(false);
+          timerEndTimeRef.current = null;
           // Use setTimeout to ensure state update completes before navigation
           setTimeout(() => {
             navigation.navigate('Rating');

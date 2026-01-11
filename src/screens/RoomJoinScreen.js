@@ -31,8 +31,14 @@ export default function RoomJoinScreen({ navigation, route }) {
       return;
     }
 
-    if (playerName.trim() === '') {
+    const trimmedName = playerName.trim();
+    if (trimmedName === '') {
       Alert.alert('Error', 'Please enter your name');
+      return;
+    }
+
+    if (trimmedName.length > 20) {
+      Alert.alert('Name Too Long', 'Name must be 20 characters or less.');
       return;
     }
 
@@ -92,7 +98,7 @@ export default function RoomJoinScreen({ navigation, route }) {
       // (can't update room root because user isn't a player yet - security rules)
       await set(ref(database, `rooms/${code}/players/${playerId}`), {
         id: playerId,
-        name: playerName.trim(),
+        name: trimmedName,
         totalScore: 0,
         roundScore: 0,
       });
@@ -101,7 +107,7 @@ export default function RoomJoinScreen({ navigation, route }) {
       navigation.replace('Lobby', {
         roomCode: code,
         playerId,
-        playerName: playerName.trim(),
+        playerName: trimmedName,
       });
     } catch (error) {
       console.error('Error joining room:', error);

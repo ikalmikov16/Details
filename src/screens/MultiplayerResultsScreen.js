@@ -16,7 +16,7 @@ import {
 import { LoadingOverlay, OfflineBanner } from '../components/NetworkStatus';
 import { database } from '../config/firebase';
 import { useTheme } from '../context/ThemeContext';
-import { getRandomTopic } from '../data/topics';
+import { getRandomTopic } from '../services/TopicService';
 import { tapLight } from '../utils/haptics';
 import { useNetworkStatus } from '../utils/network';
 import { playRoundComplete } from '../utils/sounds';
@@ -35,6 +35,7 @@ export default function MultiplayerResultsScreen({ route, navigation }) {
   const [ratings, setRatings] = useState({});
   const [currentRound, setCurrentRound] = useState(1);
   const [numRounds, setNumRounds] = useState(3);
+  const [timeLimit, setTimeLimit] = useState(60);
   const [isHost, setIsHost] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [previousTopic, setPreviousTopic] = useState('');
@@ -65,6 +66,7 @@ export default function MultiplayerResultsScreen({ route, navigation }) {
         const roomData = snapshot.val();
         setCurrentRound(roomData.currentRound || 1);
         setNumRounds(roomData.settings.numRounds);
+        setTimeLimit(roomData.settings.timeLimit || 60);
         setPreviousTopic(roomData.currentTopic || '');
 
         if (roomData.players) {
@@ -133,6 +135,7 @@ export default function MultiplayerResultsScreen({ route, navigation }) {
           currentRound: nextRound,
           currentTopic: topic,
           drawingStartTime: Date.now(),
+          drawingEndTime: Date.now() + timeLimit * 1000,
           // Don't clear drawings - we keep them for gallery
           ratings: {}, // Clear previous round ratings
           lastActivity: Date.now(),

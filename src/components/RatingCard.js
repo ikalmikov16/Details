@@ -6,6 +6,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Platform,
   ScrollView,
   StyleSheet,
   Text,
@@ -15,6 +16,7 @@ import {
 } from 'react-native';
 import { useTheme } from '../context/ThemeContext';
 import { selection, success } from '../utils/haptics';
+import CustomSlider from './CustomSlider';
 import ZoomableImage from './ZoomableImage';
 
 /**
@@ -30,12 +32,14 @@ export default function RatingCard({
   onRatingChange,
   disabled = false,
   isOwnDrawing = false,
+  onSliderActiveChange,
 }) {
   const { theme } = useTheme();
   const { width: screenWidth, height: screenHeight } = useWindowDimensions();
   const [isSaving, setIsSaving] = useState(false);
   const [isSharing, setIsSharing] = useState(false);
   const [scrollEnabled, setScrollEnabled] = useState(false);
+  const [isSliding, setIsSliding] = useState(false); // Track slider interaction
   const [containerHeight, setContainerHeight] = useState(0);
   const [contentHeight, setContentHeight] = useState(0);
 
@@ -66,6 +70,22 @@ export default function RatingCard({
       selection();
     }
     onRatingChange(score);
+  };
+
+  // Disable scroll while dragging slider (fixes Android touch issue)
+  const handleSlidingStart = () => {
+    setIsSliding(true);
+    if (onSliderActiveChange) {
+      onSliderActiveChange(true);
+    }
+  };
+
+  const handleSlidingComplete = (value) => {
+    setIsSliding(false);
+    if (onSliderActiveChange) {
+      onSliderActiveChange(false);
+    }
+    handleRatingChange(value);
   };
 
   const handleSave = async () => {
@@ -133,8 +153,8 @@ export default function RatingCard({
         style={styles.scrollView}
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
-        scrollEnabled={scrollEnabled}
-        bounces={scrollEnabled}
+        scrollEnabled={scrollEnabled && !isSliding}
+        bounces={scrollEnabled && !isSliding}
         onContentSizeChange={handleContentSizeChange}
       >
         {/* Card title */}
@@ -219,18 +239,39 @@ export default function RatingCard({
                 <Text style={styles.ratingValue}>{currentRating ?? 0}</Text>
               </View>
             </View>
-            <Slider
-              style={styles.slider}
-              minimumValue={0}
-              maximumValue={10}
-              step={1}
-              value={currentRating ?? 0}
-              onValueChange={handleRatingChange}
-              minimumTrackTintColor={theme.primary}
-              maximumTrackTintColor={theme.border}
-              thumbTintColor={theme.primary}
-              disabled={disabled}
-            />
+            <View style={styles.sliderWrapper}>
+              {Platform.OS === 'android' ? (
+                <CustomSlider
+                  style={styles.slider}
+                  minimumValue={0}
+                  maximumValue={10}
+                  step={1}
+                  value={currentRating ?? 0}
+                  onValueChange={handleRatingChange}
+                  onSlidingStart={handleSlidingStart}
+                  onSlidingComplete={handleSlidingComplete}
+                  minimumTrackTintColor={theme.primary}
+                  maximumTrackTintColor={theme.border}
+                  thumbTintColor={theme.primary}
+                  disabled={disabled}
+                />
+              ) : (
+                <Slider
+                  style={styles.slider}
+                  minimumValue={0}
+                  maximumValue={10}
+                  step={1}
+                  value={currentRating ?? 0}
+                  onValueChange={handleRatingChange}
+                  onSlidingStart={handleSlidingStart}
+                  onSlidingComplete={handleSlidingComplete}
+                  minimumTrackTintColor={theme.primary}
+                  maximumTrackTintColor={theme.border}
+                  thumbTintColor={theme.primary}
+                  disabled={disabled}
+                />
+              )}
+            </View>
             <View style={styles.sliderLabels}>
               <Text style={[styles.sliderLabel, { color: theme.textSecondary }]}>0 - Poor</Text>
               <Text style={[styles.sliderLabel, { color: theme.textSecondary }]}>
@@ -346,9 +387,14 @@ const styles = StyleSheet.create({
     fontWeight: '900',
     color: '#fff',
   },
+  sliderWrapper: {
+    // Extra padding for easier touch on Android
+    paddingVertical: Platform.OS === 'android' ? 10 : 0,
+    marginHorizontal: -4, // Compensate for slider thumb overflow
+  },
   slider: {
     width: '100%',
-    height: 50,
+    height: Platform.OS === 'android' ? 60 : 50,
   },
   sliderLabels: {
     flexDirection: 'row',

@@ -74,8 +74,38 @@
         "drawingStartTime": {
           ".validate": "newData.isNumber()"
         },
+        "drawingEndTime": {
+          ".validate": "newData.isNumber()"
+        },
         "nextRoomCode": {
           ".validate": "newData.isString() && newData.val().length == 6"
+        }
+      }
+    },
+
+    "topics": {
+      ".read": "auth != null",
+      ".write": false,
+      "version": {
+        ".validate": "newData.isNumber()"
+      },
+      "lastUpdated": {
+        ".validate": "newData.isNumber()"
+      },
+      "themes": {
+        "$themeId": {
+          ".validate": "newData.hasChildren(['name', 'emoji', 'topics'])",
+          "name": {
+            ".validate": "newData.isString()"
+          },
+          "emoji": {
+            ".validate": "newData.isString()"
+          },
+          "topics": {
+            "$index": {
+              ".validate": "newData.isString()"
+            }
+          }
         }
       }
     },

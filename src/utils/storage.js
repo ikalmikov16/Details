@@ -2,6 +2,48 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const STATS_KEY = '@game_stats';
 const HISTORY_KEY = '@game_history';
+const CONSENT_KEY = '@user_consent';
+
+// Privacy consent management
+export async function hasUserConsent() {
+  try {
+    const consent = await AsyncStorage.getItem(CONSENT_KEY);
+    return consent === 'true';
+  } catch (error) {
+    console.warn('Failed to check consent:', error);
+    return false;
+  }
+}
+
+export async function setUserConsent(accepted) {
+  try {
+    await AsyncStorage.setItem(CONSENT_KEY, accepted ? 'true' : 'false');
+    return true;
+  } catch (error) {
+    console.warn('Failed to save consent:', error);
+    return false;
+  }
+}
+
+export async function getConsentTimestamp() {
+  try {
+    const timestamp = await AsyncStorage.getItem(`${CONSENT_KEY}_timestamp`);
+    return timestamp ? parseInt(timestamp, 10) : null;
+  } catch (_error) {
+    return null;
+  }
+}
+
+export async function saveConsentWithTimestamp(accepted) {
+  try {
+    await AsyncStorage.setItem(CONSENT_KEY, accepted ? 'true' : 'false');
+    await AsyncStorage.setItem(`${CONSENT_KEY}_timestamp`, Date.now().toString());
+    return true;
+  } catch (error) {
+    console.warn('Failed to save consent:', error);
+    return false;
+  }
+}
 
 // Default stats structure
 const defaultStats = {

@@ -1,106 +1,72 @@
-import { topics, getRandomTopic, getRandomTopics } from '../../../src/data/topics';
+import { FALLBACK_THEMES, FALLBACK_TOPICS } from '../../../src/data/topics';
 
 describe('topics', () => {
-  describe('topics array', () => {
-    it('should have at least 100 topics', () => {
-      expect(topics.length).toBeGreaterThanOrEqual(100);
+  describe('FALLBACK_TOPICS array', () => {
+    it('should have exactly 100 topics', () => {
+      expect(FALLBACK_TOPICS.length).toBe(100);
     });
 
     it('should contain only non-empty strings', () => {
-      topics.forEach((topic) => {
+      FALLBACK_TOPICS.forEach((topic) => {
         expect(typeof topic).toBe('string');
         expect(topic.length).toBeGreaterThan(0);
       });
     });
 
     it('should have unique topics', () => {
-      const uniqueTopics = new Set(topics);
-      expect(uniqueTopics.size).toBe(topics.length);
+      const uniqueTopics = new Set(FALLBACK_TOPICS);
+      expect(uniqueTopics.size).toBe(FALLBACK_TOPICS.length);
     });
   });
 
-  describe('getRandomTopic', () => {
-    it('should return a topic from the list', () => {
-      const topic = getRandomTopic();
-      expect(topics).toContain(topic);
+  describe('FALLBACK_THEMES', () => {
+    it('should have exactly 10 themes', () => {
+      const themeCount = Object.keys(FALLBACK_THEMES).length;
+      expect(themeCount).toBe(10);
     });
 
-    it('should not return the same topic twice in a row', () => {
-      // Get first topic
-      const firstTopic = getRandomTopic();
-
-      // Get many more topics and check none match the previous one
-      for (let i = 0; i < 50; i++) {
-        const nextTopic = getRandomTopic();
-        const previousTopic = i === 0 ? firstTopic : topics[topics.indexOf(nextTopic)];
-        // The next topic should be different from what was just returned
-        expect(topics).toContain(nextTopic);
-      }
-    });
-
-    it('should return different topics over multiple calls (randomness)', () => {
-      const selectedTopics = new Set();
-
-      for (let i = 0; i < 50; i++) {
-        selectedTopics.add(getRandomTopic());
-      }
-
-      // Should have selected at least 10 different topics over 50 calls
-      expect(selectedTopics.size).toBeGreaterThan(10);
-    });
-  });
-
-  describe('getRandomTopics', () => {
-    it('should return the requested number of topics', () => {
-      const result = getRandomTopics(5);
-      expect(result).toHaveLength(5);
-    });
-
-    it('should return default of 3 topics when no count specified', () => {
-      const result = getRandomTopics();
-      expect(result).toHaveLength(3);
-    });
-
-    it('should return unique topics', () => {
-      const result = getRandomTopics(10);
-      const uniqueTopics = new Set(result);
-      expect(uniqueTopics.size).toBe(10);
-    });
-
-    it('should return topics from the list', () => {
-      const result = getRandomTopics(5);
-      result.forEach((topic) => {
-        expect(topics).toContain(topic);
+    it('each theme should have required properties', () => {
+      Object.entries(FALLBACK_THEMES).forEach(([key, theme]) => {
+        expect(theme).toHaveProperty('name');
+        expect(theme).toHaveProperty('emoji');
+        expect(theme).toHaveProperty('topics');
+        expect(typeof theme.name).toBe('string');
+        expect(typeof theme.emoji).toBe('string');
+        expect(Array.isArray(theme.topics)).toBe(true);
       });
     });
 
-    it('should handle count larger than topics length', () => {
-      const result = getRandomTopics(topics.length + 10);
-      expect(result.length).toBe(topics.length);
+    it('each theme should have exactly 10 topics', () => {
+      Object.entries(FALLBACK_THEMES).forEach(([key, theme]) => {
+        expect(theme.topics.length).toBe(10);
+      });
     });
 
-    it('should handle count of 0', () => {
-      const result = getRandomTopics(0);
-      expect(result).toHaveLength(0);
+    it('flattened themes should equal FALLBACK_TOPICS', () => {
+      const flattened = Object.values(FALLBACK_THEMES).flatMap((theme) => theme.topics);
+      expect(flattened.length).toBe(FALLBACK_TOPICS.length);
+      expect(flattened).toEqual(FALLBACK_TOPICS);
+    });
+  });
+
+  describe('topic content quality', () => {
+    it('topics should not be too short', () => {
+      FALLBACK_TOPICS.forEach((topic) => {
+        expect(topic.length).toBeGreaterThanOrEqual(5);
+      });
     });
 
-    it('should handle count of 1', () => {
-      const result = getRandomTopics(1);
-      expect(result).toHaveLength(1);
-      expect(topics).toContain(result[0]);
+    it('topics should not be excessively long', () => {
+      FALLBACK_TOPICS.forEach((topic) => {
+        expect(topic.length).toBeLessThan(100);
+      });
     });
 
-    it('should return different results on multiple calls (shuffled)', () => {
-      const results = [];
-
-      for (let i = 0; i < 10; i++) {
-        results.push(getRandomTopics(5).join(','));
-      }
-
-      const uniqueResults = new Set(results);
-      // Should have at least some different combinations
-      expect(uniqueResults.size).toBeGreaterThan(1);
+    it('topics should be properly capitalized', () => {
+      FALLBACK_TOPICS.forEach((topic) => {
+        // First character should be uppercase (A-Z) or a number/quote for some edge cases
+        expect(topic[0]).toMatch(/[A-Z0-9"']/);
+      });
     });
   });
 });
-

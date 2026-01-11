@@ -16,7 +16,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { LoadingOverlay, OfflineBanner } from '../components/NetworkStatus';
 import { database } from '../config/firebase';
 import { useTheme } from '../context/ThemeContext';
-import { getRandomTopic } from '../data/topics';
+import { getRandomTopic } from '../services/TopicService';
 import {
   error as hapticError,
   success,
@@ -117,10 +117,12 @@ export default function LobbyScreen({ route, navigation }) {
 
     try {
       const topic = getRandomTopic();
+      const timeLimit = roomSettings?.timeLimit || 60;
       await update(ref(database, `rooms/${roomCode}`), {
         status: 'drawing',
         currentTopic: topic,
         drawingStartTime: Date.now(),
+        drawingEndTime: Date.now() + timeLimit * 1000,
         lastActivity: Date.now(),
       });
       success(); // Haptic feedback on successful game start

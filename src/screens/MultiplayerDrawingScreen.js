@@ -1,9 +1,11 @@
+import * as FileSystem from 'expo-file-system/legacy';
 import { get, onValue, ref, update } from 'firebase/database';
-import { getDownloadURL, ref as storageRef, uploadBytes } from 'firebase/storage';
+import { getDownloadURL, ref as storageRef, uploadBytesResumable } from 'firebase/storage';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
   Animated,
+  AppState,
   Platform,
   ScrollView,
   StyleSheet,
@@ -27,6 +29,45 @@ import {
 import { error as hapticError, success, tapMedium, warning } from '../utils/haptics';
 import { useNetworkStatus } from '../utils/network';
 import { playClockTickCountdown, playSuccess, stopClockTick } from '../utils/sounds';
+
+/**
+ * Helper to upload base64 image to Firebase Storage
+ * Works reliably on both iOS and Android by writing to temp file first
+ */
+async function uploadBase64Image(base64Data, storageReference) {
+  // Write base64 to temporary file
+  const tempPath = `${FileSystem.cacheDirectory}temp_drawing_${Date.now()}.png`;
+
+  try {
+    await FileSystem.writeAsStringAsync(tempPath, base64Data, {
+      encoding: FileSystem.EncodingType.Base64,
+    });
+
+    // Read file as blob-compatible format and upload
+    const response = await fetch(tempPath);
+    const blob = await response.blob();
+
+    // Upload with resumable to handle network issues better
+    const uploadTask = uploadBytesResumable(storageReference, blob, {
+      contentType: 'image/png',
+    });
+
+    // Wait for upload to complete
+    await uploadTask;
+
+    // Get download URL
+    const downloadURL = await getDownloadURL(storageReference);
+
+    // Clean up temp file
+    await FileSystem.deleteAsync(tempPath, { idempotent: true });
+
+    return downloadURL;
+  } catch (error) {
+    // Clean up temp file on error
+    await FileSystem.deleteAsync(tempPath, { idempotent: true }).catch(() => {});
+    throw error;
+  }
+}
 
 export default function MultiplayerDrawingScreen({ route, navigation }) {
   const { roomCode, playerId, playerName } = route.params;
@@ -70,6 +111,9 @@ export default function MultiplayerDrawingScreen({ route, navigation }) {
   // Timer initialization ref to prevent double-start bug
   const timerInitialized = useRef(false);
 
+  // Store the drawing end time from Firebase for accurate time sync
+  const drawingEndTimeRef = useRef(null);
+
   // Store the last captured canvas data so it's available during auto-submit
   const lastCanvasDataRef = useRef(null);
 
@@ -102,17 +146,21 @@ export default function MultiplayerDrawingScreen({ route, navigation }) {
   }, []);
 
   // Periodically capture the canvas while drawing for backup
+  // Capture more frequently in the last 10 seconds to preserve final strokes
   useEffect(() => {
     if (Platform.OS === 'web' || showIntro || hasSubmitted) return;
+
+    // Use faster capture interval in final 10 seconds (1 second vs 5 seconds)
+    const interval = timeRemaining <= 10 ? 1000 : CANVAS_CAPTURE.INTERVAL_MS;
 
     const captureInterval = setInterval(() => {
       if (!hasSubmitted && !isSubmitting) {
         captureCanvas();
       }
-    }, CANVAS_CAPTURE.INTERVAL_MS);
+    }, interval);
 
     return () => clearInterval(captureInterval);
-  }, [showIntro, hasSubmitted, isSubmitting, captureCanvas]);
+  }, [showIntro, hasSubmitted, isSubmitting, captureCanvas, timeRemaining]);
 
   useEffect(() => {
     const roomRef = ref(database, `rooms/${roomCode}`);
@@ -142,9 +190,21 @@ export default function MultiplayerDrawingScreen({ route, navigation }) {
         const submitted = playersList.filter((p) => submittedIds.includes(p.id)).map((p) => p.name);
         setSubmittedPlayers(submitted);
 
-        // Set timeRemaining to full time limit - only once when first loading
-        if (roomData.drawingStartTime && !timerInitialized.current) {
+        // Calculate timeRemaining based on drawingEndTime from Firebase
+        // This ensures accurate time even if app was backgrounded
+        if (roomData.drawingEndTime && !timerInitialized.current) {
           timerInitialized.current = true;
+          drawingEndTimeRef.current = roomData.drawingEndTime;
+          const remaining = Math.max(0, Math.ceil((roomData.drawingEndTime - Date.now()) / 1000));
+          setTimeRemaining(remaining);
+        } else if (
+          roomData.drawingStartTime &&
+          !roomData.drawingEndTime &&
+          !timerInitialized.current
+        ) {
+          // Fallback for older game sessions without drawingEndTime
+          timerInitialized.current = true;
+          drawingEndTimeRef.current = Date.now() + roomTimeLimit * 1000;
           setTimeRemaining(roomTimeLimit);
         }
 
@@ -164,20 +224,47 @@ export default function MultiplayerDrawingScreen({ route, navigation }) {
   }, [roomCode, playerId, navigation, playerName]);
 
   // Only start the drawing timer after intro animation is complete
+  // Uses drawingEndTime from Firebase for accurate time sync (even after backgrounding)
   useEffect(() => {
     if (timeRemaining === 0 || !introAnimationDone) return;
 
     const timer = setInterval(() => {
-      setTimeRemaining((prev) => {
-        if (prev <= 1) {
-          return 0;
-        }
-        return prev - 1;
-      });
+      if (drawingEndTimeRef.current) {
+        // Calculate time based on actual end time for accuracy
+        const remaining = Math.max(0, Math.ceil((drawingEndTimeRef.current - Date.now()) / 1000));
+        setTimeRemaining(remaining);
+      } else {
+        // Fallback to decrement if no end time available
+        setTimeRemaining((prev) => {
+          if (prev <= 1) {
+            return 0;
+          }
+          return prev - 1;
+        });
+      }
     }, 1000);
 
     return () => clearInterval(timer);
   }, [timeRemaining, introAnimationDone]);
+
+  // Handle app state changes (backgrounding/foregrounding)
+  // Recalculate timer when app comes back to foreground
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (nextAppState) => {
+      if (
+        nextAppState === 'active' &&
+        drawingEndTimeRef.current &&
+        introAnimationDone &&
+        !hasSubmitted
+      ) {
+        // App came back to foreground - recalculate time based on end time
+        const remaining = Math.max(0, Math.ceil((drawingEndTimeRef.current - Date.now()) / 1000));
+        setTimeRemaining(remaining);
+      }
+    });
+
+    return () => subscription.remove();
+  }, [introAnimationDone, hasSubmitted]);
 
   // Check if all players have submitted their drawings
   const checkAllSubmitted = useCallback(async () => {
@@ -214,21 +301,35 @@ export default function MultiplayerDrawingScreen({ route, navigation }) {
 
       // On native platforms, try to capture the canvas using our synchronized helper
       if (Platform.OS !== 'web') {
-        const base64 = await captureCanvas();
+        // Wait a moment for any final strokes to fully render before capturing
+        await new Promise((resolve) => setTimeout(resolve, 300));
+
+        // Do a fresh capture right before submitting to get the absolute latest state
+        let base64 = null;
+        if (canvasRef.current) {
+          try {
+            base64 = await canvasRef.current.toBase64(
+              CANVAS_CAPTURE.FORMAT,
+              CANVAS_CAPTURE.QUALITY
+            );
+          } catch (e) {
+            console.warn('Final capture failed, using backup:', e.message);
+          }
+        }
+
+        // Fall back to the periodic backup if fresh capture failed
+        if (!base64 || base64.length < MIN_VALID_DRAWING_LENGTH) {
+          base64 = lastCanvasDataRef.current;
+        }
 
         // Upload if we have valid base64
         if (base64 && base64.length > MIN_VALID_DRAWING_LENGTH) {
           try {
-            const dataUrl = `data:image/png;base64,${base64}`;
-            const response = await fetch(dataUrl);
-            const blob = await response.blob();
-
             const drawingRef = storageRef(
               storage,
               `drawings/${roomCode}/${playerId}_round${currentRound}.png`
             );
-            await uploadBytes(drawingRef, blob, { contentType: 'image/png' });
-            downloadURL = await getDownloadURL(drawingRef);
+            downloadURL = await uploadBase64Image(base64, drawingRef);
           } catch (uploadError) {
             console.error('Auto-submit upload failed:', uploadError);
           }
@@ -238,38 +339,47 @@ export default function MultiplayerDrawingScreen({ route, navigation }) {
       // If no drawing captured (web or empty canvas), submit blank white canvas
       if (!downloadURL) {
         try {
-          const response = await fetch(`data:image/png;base64,${BLANK_WHITE_PNG_BASE64}`);
-          const blob = await response.blob();
-
           const drawingRef = storageRef(
             storage,
             `drawings/${roomCode}/${playerId}_round${currentRound}.png`
           );
-          await uploadBytes(drawingRef, blob, { contentType: 'image/png' });
-          downloadURL = await getDownloadURL(drawingRef);
+          downloadURL = await uploadBase64Image(BLANK_WHITE_PNG_BASE64, drawingRef);
           isPlaceholder = true;
         } catch (uploadError) {
           console.error('Auto-submit: failed to upload placeholder:', uploadError);
         }
       }
 
-      // Update database with the drawing
-      await update(ref(database, `rooms/${roomCode}/drawings/round${currentRound}/${playerId}`), {
-        url: downloadURL,
-        submittedAt: Date.now(),
-        ...(isPlaceholder && { isPlaceholder: true }),
-      });
+      // Only update database if we have a valid URL
+      if (downloadURL) {
+        await update(ref(database, `rooms/${roomCode}/drawings/round${currentRound}/${playerId}`), {
+          url: downloadURL,
+          submittedAt: Date.now(),
+          ...(isPlaceholder && { isPlaceholder: true }),
+        });
 
-      setHasSubmitted(true);
-      setIsSubmitting(false);
-      success();
-      playSuccess();
+        setHasSubmitted(true);
+        setIsSubmitting(false);
+        success();
+        playSuccess();
 
-      // Check if all players have submitted
-      checkAllSubmitted();
+        // Check if all players have submitted
+        checkAllSubmitted();
+      } else {
+        // Upload completely failed - show error to user
+        console.error('Auto-submit: All upload attempts failed');
+        setIsSubmitting(false);
+        hapticError();
+        Alert.alert(
+          'Upload Failed',
+          'Could not submit your drawing due to network issues. Please check your connection and try again.',
+          [{ text: 'OK' }]
+        );
+      }
     } catch (error) {
       console.error('Error auto-submitting drawing:', error);
       setIsSubmitting(false);
+      hapticError();
     }
   }, [
     hasSubmitted,
@@ -279,7 +389,6 @@ export default function MultiplayerDrawingScreen({ route, navigation }) {
     playerId,
     currentRound,
     checkAllSubmitted,
-    captureCanvas,
   ]);
 
   // Handle time up separately
@@ -438,15 +547,11 @@ export default function MultiplayerDrawingScreen({ route, navigation }) {
     setIsSubmitting(true);
 
     try {
-      const response = await fetch(`data:image/png;base64,${BLANK_WHITE_PNG_BASE64}`);
-      const blob = await response.blob();
-
       const drawingRef = storageRef(
         storage,
         `drawings/${roomCode}/${playerId}_round${currentRound}.png`
       );
-      await uploadBytes(drawingRef, blob, { contentType: 'image/png' });
-      const downloadURL = await getDownloadURL(drawingRef);
+      const downloadURL = await uploadBase64Image(BLANK_WHITE_PNG_BASE64, drawingRef);
 
       await update(ref(database, `rooms/${roomCode}/drawings/round${currentRound}/${playerId}`), {
         url: downloadURL,
@@ -486,14 +591,11 @@ export default function MultiplayerDrawingScreen({ route, navigation }) {
       // If still no drawing, use blank white canvas
       if (!base64 || base64.length < MIN_VALID_DRAWING_LENGTH) {
         try {
-          const response = await fetch(`data:image/png;base64,${BLANK_WHITE_PNG_BASE64}`);
-          const blob = await response.blob();
           const drawingRef = storageRef(
             storage,
             `drawings/${roomCode}/${playerId}_round${currentRound}.png`
           );
-          await uploadBytes(drawingRef, blob, { contentType: 'image/png' });
-          const downloadURL = await getDownloadURL(drawingRef);
+          const downloadURL = await uploadBase64Image(BLANK_WHITE_PNG_BASE64, drawingRef);
 
           await update(
             ref(database, `rooms/${roomCode}/drawings/round${currentRound}/${playerId}`),
@@ -516,16 +618,11 @@ export default function MultiplayerDrawingScreen({ route, navigation }) {
         }
       }
 
-      const dataUrl = `data:image/png;base64,${base64}`;
-      const response = await fetch(dataUrl);
-      const blob = await response.blob();
-
       const drawingRef = storageRef(
         storage,
         `drawings/${roomCode}/${playerId}_round${currentRound}.png`
       );
-      await uploadBytes(drawingRef, blob, { contentType: 'image/png' });
-      const downloadURL = await getDownloadURL(drawingRef);
+      const downloadURL = await uploadBase64Image(base64, drawingRef);
 
       await update(ref(database, `rooms/${roomCode}/drawings/round${currentRound}/${playerId}`), {
         url: downloadURL,

@@ -6,6 +6,7 @@ import { database } from '../config/firebase';
 import { useTheme } from '../context/ThemeContext';
 import { error as hapticError, success, tapMedium } from '../utils/haptics';
 import { archiveGameAndCleanup } from '../utils/roomCleanup';
+import { generateRoomCode } from '../utils/roomCode';
 import { shareResultsAsText } from '../utils/sharing';
 import { playCelebration } from '../utils/sounds';
 import { recordGameComplete } from '../utils/storage';
@@ -118,16 +119,6 @@ export default function MultiplayerFinalScreen({ route, navigation }) {
 
     return unsubscribe;
   }, [navigation, performCleanup]);
-
-  // Generate a random room code
-  const generateRoomCode = () => {
-    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-    let code = '';
-    for (let i = 0; i < 6; i++) {
-      code += chars.charAt(Math.floor(Math.random() * chars.length));
-    }
-    return code;
-  };
 
   const handlePlayAgain = async () => {
     if (isCreatingNewRoom) return;

@@ -36,6 +36,7 @@ export default function MultiplayerRatingScreen({ route, navigation }) {
   const [currentIndex, setCurrentIndex] = useState(0);
 
   const flatListRef = useRef(null);
+  const [isSliderActive, setIsSliderActive] = useState(false);
 
   // Hide the navigation header
   useEffect(() => {
@@ -214,6 +215,7 @@ export default function MultiplayerRatingScreen({ route, navigation }) {
         onRatingChange={(score) => handleRating(player.id, score)}
         disabled={hasSubmitted}
         isOwnDrawing={player.isOwnDrawing || false}
+        onSliderActiveChange={setIsSliderActive}
       />
     );
   };
@@ -318,6 +320,7 @@ export default function MultiplayerRatingScreen({ route, navigation }) {
           index,
         })}
         style={styles.flatList}
+        scrollEnabled={!isSliderActive}
       />
 
       {/* Submit button - only show when all rated */}
