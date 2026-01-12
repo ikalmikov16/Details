@@ -40,6 +40,7 @@ export default function RatingCard({
   const [isSharing, setIsSharing] = useState(false);
   const [scrollEnabled, setScrollEnabled] = useState(false);
   const [isSliding, setIsSliding] = useState(false); // Track slider interaction
+  const [isZooming, setIsZooming] = useState(false); // Track image zoom
   const [containerHeight, setContainerHeight] = useState(0);
   const [contentHeight, setContentHeight] = useState(0);
 
@@ -58,10 +59,11 @@ export default function RatingCard({
     }
   }, [containerHeight, contentHeight]);
 
-  // Use a consistent fixed height to prevent layout shifts
-  // This gives a good balance for most phone screen drawings
-  const defaultImageHeight = isOwnDrawing ? screenHeight * 0.45 : screenHeight * 0.38;
-  const imageHeight = defaultImageHeight;
+  // Calculate container width (screen width minus padding)
+  const imageContainerWidth = screenWidth - 40; // 20px padding on each side
+  
+  // Max height to keep images consistent while still showing most of the drawing
+  const maxImageHeight = screenHeight * 0.48;
 
   const handleRatingChange = (value) => {
     if (disabled || isOwnDrawing) return;
@@ -77,6 +79,15 @@ export default function RatingCard({
     setIsSliding(true);
     if (onSliderActiveChange) {
       onSliderActiveChange(true);
+    }
+  };
+
+  // Handle zoom state changes
+  const handleZoomChange = (zoomed) => {
+    setIsZooming(zoomed);
+    if (onSliderActiveChange) {
+      // Reuse the same callback to disable page swiping when zooming
+      onSliderActiveChange(zoomed);
     }
   };
 
@@ -153,8 +164,8 @@ export default function RatingCard({
         style={styles.scrollView}
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
-        scrollEnabled={scrollEnabled && !isSliding}
-        bounces={scrollEnabled && !isSliding}
+        scrollEnabled={scrollEnabled && !isSliding && !isZooming}
+        bounces={scrollEnabled && !isSliding && !isZooming}
         onContentSizeChange={handleContentSizeChange}
       >
         {/* Card title */}
@@ -164,24 +175,19 @@ export default function RatingCard({
           </Text>
         </View>
 
-        {/* Drawing with pinch-to-zoom */}
-        <View
-          style={[
-            styles.drawingContainer,
-            {
-              backgroundColor: '#fff',
-              height: imageHeight,
-            },
-          ]}
-        >
+        {/* Drawing with pinch-to-zoom - auto-sized to image's actual aspect ratio */}
+        <View style={styles.drawingContainer}>
           {drawingUrl ? (
             <ZoomableImage
               source={{ uri: drawingUrl }}
-              style={{ height: imageHeight }}
+              containerWidth={imageContainerWidth}
+              maxHeight={maxImageHeight}
               resizeMode="contain"
+              showBorder={true}
+              onZoomChange={handleZoomChange}
             />
           ) : (
-            <View style={[styles.noDrawing, { backgroundColor: theme.border }]}>
+            <View style={[styles.noDrawing, { backgroundColor: theme.border, height: 200 }]}>
               <Text style={[styles.noDrawingText, { color: theme.textSecondary }]}>
                 No drawing submitted
               </Text>
@@ -316,13 +322,9 @@ const styles = StyleSheet.create({
   },
   drawingContainer: {
     width: '100%',
-    borderRadius: 20,
-    overflow: 'hidden',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.15,
-    shadowRadius: 12,
-    elevation: 6,
+    // Center the image - border is now on ZoomableImage itself for accurate sizing
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   noDrawing: {
     flex: 1,
