@@ -3,6 +3,7 @@ import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import * as Linking from 'expo-linking';
 import React, { useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, LogBox, Text, View } from 'react-native';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
 import ErrorBoundary from './src/components/ErrorBoundary';
 import { signInAnonymouslyIfNeeded } from './src/config/firebase';
 import { GameProvider } from './src/context/GameContext';
@@ -121,9 +122,11 @@ export default function App() {
   // Show consent screen if user hasn't accepted privacy policy yet
   if (!hasConsent) {
     return (
-      <ThemeProvider>
-        <ConsentScreen onConsentGiven={handleConsentGiven} />
-      </ThemeProvider>
+      <SafeAreaProvider>
+        <ThemeProvider>
+          <ConsentScreen onConsentGiven={handleConsentGiven} />
+        </ThemeProvider>
+      </SafeAreaProvider>
     );
   }
 

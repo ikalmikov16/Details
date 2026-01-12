@@ -120,6 +120,44 @@ export default function MultiplayerDrawingScreen({ route, navigation }) {
   // Lock to prevent concurrent canvas captures (fixes race condition)
   const captureInProgressRef = useRef(false);
 
+  // Track when the last stroke ended - used to wait for in-progress strokes on time up
+  const lastStrokeEndTimeRef = useRef(Date.now());
+  const drawEndResolverRef = useRef(null);
+
+  // Called when user finishes a stroke (lifts finger)
+  const handleDrawEnd = useCallback(() => {
+    lastStrokeEndTimeRef.current = Date.now();
+    // If we're waiting for a stroke to complete, resolve the promise
+    if (drawEndResolverRef.current) {
+      drawEndResolverRef.current();
+      drawEndResolverRef.current = null;
+    }
+  }, []);
+
+  // Wait for any in-progress stroke to complete (max 800ms wait)
+  const waitForStrokeComplete = useCallback(() => {
+    return new Promise((resolve) => {
+      // If no stroke in progress or last stroke was very recent, resolve immediately
+      const timeSinceLastStroke = Date.now() - lastStrokeEndTimeRef.current;
+      if (timeSinceLastStroke < 100) {
+        // Stroke just ended, good to capture
+        resolve();
+        return;
+      }
+
+      // Set up a resolver that onDrawEnd will call
+      drawEndResolverRef.current = resolve;
+
+      // Max wait of 800ms - if user doesn't lift finger, capture anyway
+      setTimeout(() => {
+        if (drawEndResolverRef.current) {
+          drawEndResolverRef.current = null;
+          resolve();
+        }
+      }, 800);
+    });
+  }, []);
+
   // Helper function to safely capture canvas with lock
   const captureCanvas = useCallback(async () => {
     // Skip if capture already in progress or canvas not ready
@@ -190,22 +228,28 @@ export default function MultiplayerDrawingScreen({ route, navigation }) {
         const submitted = playersList.filter((p) => submittedIds.includes(p.id)).map((p) => p.name);
         setSubmittedPlayers(submitted);
 
-        // Calculate timeRemaining based on drawingEndTime from Firebase
-        // This ensures accurate time even if app was backgrounded
-        if (roomData.drawingEndTime && !timerInitialized.current) {
+        // Initialize timer with the room's time limit setting
+        // We use the fixed timeLimit rather than calculating from drawingEndTime
+        // to avoid clock skew issues between devices (different Date.now() values)
+        if (!timerInitialized.current && (roomData.drawingEndTime || roomData.drawingStartTime)) {
           timerInitialized.current = true;
-          drawingEndTimeRef.current = roomData.drawingEndTime;
-          const remaining = Math.max(0, Math.ceil((roomData.drawingEndTime - Date.now()) / 1000));
-          setTimeRemaining(remaining);
-        } else if (
-          roomData.drawingStartTime &&
-          !roomData.drawingEndTime &&
-          !timerInitialized.current
-        ) {
-          // Fallback for older game sessions without drawingEndTime
-          timerInitialized.current = true;
-          drawingEndTimeRef.current = Date.now() + roomTimeLimit * 1000;
-          setTimeRemaining(roomTimeLimit);
+          // Store the server's end time for background/foreground sync
+          const endTime = roomData.drawingEndTime || (roomData.drawingStartTime + roomTimeLimit * 1000);
+          drawingEndTimeRef.current = endTime;
+          
+          // Check if player is joining late (more than 5 seconds after drawing started)
+          // In this case, we need to calculate remaining time to stay in sync
+          const elapsedSinceStart = Date.now() - roomData.drawingStartTime;
+          const introAndBufferTime = 5000; // ~5 seconds for intro animation + buffer
+          
+          if (elapsedSinceStart > introAndBufferTime) {
+            // Late joiner - calculate remaining time from elapsed
+            const remainingTime = Math.max(0, roomTimeLimit - Math.floor(elapsedSinceStart / 1000));
+            setTimeRemaining(remainingTime);
+          } else {
+            // Normal join - show exact time limit, countdown starts after intro
+            setTimeRemaining(roomTimeLimit);
+          }
         }
 
         if (roomData.status === 'rating') {
@@ -224,24 +268,19 @@ export default function MultiplayerDrawingScreen({ route, navigation }) {
   }, [roomCode, playerId, navigation, playerName]);
 
   // Only start the drawing timer after intro animation is complete
-  // Uses drawingEndTime from Firebase for accurate time sync (even after backgrounding)
+  // Uses simple decrement to avoid clock skew issues between devices
   useEffect(() => {
     if (timeRemaining === 0 || !introAnimationDone) return;
 
     const timer = setInterval(() => {
-      if (drawingEndTimeRef.current) {
-        // Calculate time based on actual end time for accuracy
-        const remaining = Math.max(0, Math.ceil((drawingEndTimeRef.current - Date.now()) / 1000));
-        setTimeRemaining(remaining);
-      } else {
-        // Fallback to decrement if no end time available
-        setTimeRemaining((prev) => {
-          if (prev <= 1) {
-            return 0;
-          }
-          return prev - 1;
-        });
-      }
+      // Simple decrement - avoids clock skew issues between devices
+      // Server time (drawingEndTimeRef) is only used for background/foreground recovery
+      setTimeRemaining((prev) => {
+        if (prev <= 1) {
+          return 0;
+        }
+        return prev - 1;
+      });
     }, 1000);
 
     return () => clearInterval(timer);
@@ -301,8 +340,11 @@ export default function MultiplayerDrawingScreen({ route, navigation }) {
 
       // On native platforms, try to capture the canvas using our synchronized helper
       if (Platform.OS !== 'web') {
-        // Wait a moment for any final strokes to fully render before capturing
-        await new Promise((resolve) => setTimeout(resolve, 300));
+        // Wait for any in-progress stroke to complete before capturing
+        // This ensures the last stroke is saved even if user is still drawing when time runs out
+        await waitForStrokeComplete();
+        // Small additional delay for the canvas to fully render the stroke
+        await new Promise((resolve) => setTimeout(resolve, 150));
 
         // Do a fresh capture right before submitting to get the absolute latest state
         let base64 = null;
@@ -389,6 +431,7 @@ export default function MultiplayerDrawingScreen({ route, navigation }) {
     playerId,
     currentRound,
     checkAllSubmitted,
+    waitForStrokeComplete,
   ]);
 
   // Handle time up separately
@@ -840,6 +883,7 @@ export default function MultiplayerDrawingScreen({ route, navigation }) {
             strokeWidth={strokeWidth}
             backgroundColor="#FFFFFF"
             isEraser={isEraser}
+            onDrawEnd={handleDrawEnd}
           />
         </View>
 
