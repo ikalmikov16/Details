@@ -61,7 +61,7 @@ export default function RatingCard({
 
   // Calculate container width (screen width minus padding)
   const imageContainerWidth = screenWidth - 40; // 20px padding on each side
-  
+
   // Max height to keep images consistent while still showing most of the drawing
   const maxImageHeight = screenHeight * 0.48;
 

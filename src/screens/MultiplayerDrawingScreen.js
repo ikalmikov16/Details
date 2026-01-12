@@ -234,14 +234,15 @@ export default function MultiplayerDrawingScreen({ route, navigation }) {
         if (!timerInitialized.current && (roomData.drawingEndTime || roomData.drawingStartTime)) {
           timerInitialized.current = true;
           // Store the server's end time for background/foreground sync
-          const endTime = roomData.drawingEndTime || (roomData.drawingStartTime + roomTimeLimit * 1000);
+          const endTime =
+            roomData.drawingEndTime || roomData.drawingStartTime + roomTimeLimit * 1000;
           drawingEndTimeRef.current = endTime;
-          
+
           // Check if player is joining late (more than 5 seconds after drawing started)
           // In this case, we need to calculate remaining time to stay in sync
           const elapsedSinceStart = Date.now() - roomData.drawingStartTime;
           const introAndBufferTime = 5000; // ~5 seconds for intro animation + buffer
-          
+
           if (elapsedSinceStart > introAndBufferTime) {
             // Late joiner - calculate remaining time from elapsed
             const remainingTime = Math.max(0, roomTimeLimit - Math.floor(elapsedSinceStart / 1000));

@@ -14,11 +14,11 @@ import Animated, {
  * - Pinch anywhere to zoom into that point
  * - Pan to move around when zoomed in
  * - Springs back when released
- * 
+ *
  * Now auto-detects image dimensions and displays at correct aspect ratio
  */
-export default function ZoomableImage({ 
-  source, 
+export default function ZoomableImage({
+  source,
   resizeMode = 'cover',
   containerWidth,
   maxHeight,
@@ -38,7 +38,6 @@ export default function ZoomableImage({
   const opacity = useSharedValue(0);
   const [isLoading, setIsLoading] = useState(true);
   const [imageDimensions, setImageDimensions] = useState(null);
-  const [isZoomed, setIsZoomed] = useState(false);
 
   // Get actual image dimensions from the URI
   useEffect(() => {
@@ -61,7 +60,6 @@ export default function ZoomableImage({
   }, [source?.uri, onDimensionsLoaded]);
 
   const updateZoomState = (zoomed) => {
-    setIsZoomed(zoomed);
     if (onZoomChange) {
       onZoomChange(zoomed);
     }
@@ -80,7 +78,7 @@ export default function ZoomableImage({
       // Calculate new scale
       const newScale = Math.min(Math.max(savedScale.value * event.scale, 1), 5);
       scale.value = newScale;
-      
+
       if (newScale > 1) {
         runOnJS(updateZoomState)(true);
       }
@@ -133,20 +131,20 @@ export default function ZoomableImage({
   // Thicker frame especially on sides for classic gallery look
   const frameSizeHorizontal = showBorder ? 56 : 0; // Left/right
   const frameSizeVertical = showBorder ? 44 : 0; // Top/bottom
-  
+
   // Calculate display dimensions based on actual image aspect ratio
   // Maintains proper aspect ratio even when maxHeight is applied
   const baseWidth = containerWidth || screenWidth;
   // Available space for the image itself (excluding frame)
   const availableWidth = baseWidth - frameSizeHorizontal;
   const availableMaxHeight = maxHeight ? maxHeight - frameSizeVertical : null;
-  
+
   let imageDisplayWidth = availableWidth;
   let imageDisplayHeight = availableWidth; // Default to square
-  
+
   if (imageDimensions) {
     imageDisplayHeight = availableWidth / imageDimensions.aspectRatio;
-    
+
     // If height exceeds maxHeight, scale down both dimensions to maintain aspect ratio
     if (availableMaxHeight && imageDisplayHeight > availableMaxHeight) {
       const scaleRatio = availableMaxHeight / imageDisplayHeight;
@@ -154,7 +152,7 @@ export default function ZoomableImage({
       imageDisplayWidth = availableWidth * scaleRatio;
     }
   }
-  
+
   // Total display size including frame (different horizontal/vertical)
   const displayWidth = imageDisplayWidth + frameSizeHorizontal;
   const displayHeight = imageDisplayHeight + frameSizeVertical;
@@ -182,80 +180,99 @@ export default function ZoomableImage({
 
   // With elegant picture frame - thicker on sides
   // Calculate frame layer sizes (proportionally thicker on sides)
-  const outerH = 8, outerV = 6;      // Outer edge
-  const bodyH = 16, bodyV = 12;      // Main wood body  
-  const innerH = 6, innerV = 5;      // Inner edge
-  const goldH = 4, goldV = 3;        // Gold lip
-  const matteH = 6, matteV = 4;      // Matte border
+  const outerH = 8,
+    outerV = 6; // Outer edge
+  const bodyH = 16,
+    bodyV = 12; // Main wood body
+  const innerH = 6,
+    innerV = 5; // Inner edge
+  const goldH = 4,
+    goldV = 3; // Gold lip
+  const matteH = 6,
+    matteV = 4; // Matte border
 
   return (
     <View style={styles.frameContainer}>
       {/* Outer shadow layer */}
-      <View style={[
-        styles.frameShadow,
-        { 
-          width: displayWidth + 6, 
-          height: displayHeight + 6,
-        },
-      ]}>
-        {/* Main frame - outer edge with highlight */}
-        <View style={[
-          styles.frameOuter,
-          { 
-            width: displayWidth, 
-            height: displayHeight,
-            paddingHorizontal: outerH,
-            paddingVertical: outerV,
+      <View
+        style={[
+          styles.frameShadow,
+          {
+            width: displayWidth + 6,
+            height: displayHeight + 6,
           },
-        ]}>
-          {/* Frame body with wood grain effect */}
-          <View style={[
-            styles.frameBody,
-            { 
-              width: displayWidth - outerH * 2,
-              height: displayHeight - outerV * 2,
-              paddingHorizontal: bodyH,
-              paddingVertical: bodyV,
+        ]}
+      >
+        {/* Main frame - outer edge with highlight */}
+        <View
+          style={[
+            styles.frameOuter,
+            {
+              width: displayWidth,
+              height: displayHeight,
+              paddingHorizontal: outerH,
+              paddingVertical: outerV,
             },
-          ]}>
-            {/* Inner frame edge - creates depth */}
-            <View style={[
-              styles.frameInnerEdge,
+          ]}
+        >
+          {/* Frame body with wood grain effect */}
+          <View
+            style={[
+              styles.frameBody,
               {
-                width: displayWidth - outerH * 2 - bodyH * 2,
-                height: displayHeight - outerV * 2 - bodyV * 2,
-                paddingHorizontal: innerH,
-                paddingVertical: innerV,
+                width: displayWidth - outerH * 2,
+                height: displayHeight - outerV * 2,
+                paddingHorizontal: bodyH,
+                paddingVertical: bodyV,
               },
-            ]}>
-              {/* Gold/brass inner lip */}
-              <View style={[
-                styles.frameGoldLip,
+            ]}
+          >
+            {/* Inner frame edge - creates depth */}
+            <View
+              style={[
+                styles.frameInnerEdge,
                 {
-                  width: displayWidth - outerH * 2 - bodyH * 2 - innerH * 2,
-                  height: displayHeight - outerV * 2 - bodyV * 2 - innerV * 2,
-                  paddingHorizontal: goldH,
-                  paddingVertical: goldV,
+                  width: displayWidth - outerH * 2 - bodyH * 2,
+                  height: displayHeight - outerV * 2 - bodyV * 2,
+                  paddingHorizontal: innerH,
+                  paddingVertical: innerV,
                 },
-              ]}>
-                {/* Matte/mount around image */}
-                <View style={[
-                  styles.frameMatte,
+              ]}
+            >
+              {/* Gold/brass inner lip */}
+              <View
+                style={[
+                  styles.frameGoldLip,
                   {
-                    width: imageDisplayWidth + matteH * 2,
-                    height: imageDisplayHeight + matteV * 2,
-                    paddingHorizontal: matteH,
-                    paddingVertical: matteV,
+                    width: displayWidth - outerH * 2 - bodyH * 2 - innerH * 2,
+                    height: displayHeight - outerV * 2 - bodyV * 2 - innerV * 2,
+                    paddingHorizontal: goldH,
+                    paddingVertical: goldV,
                   },
-                ]}>
-                  {/* Canvas/image area */}
-                  <View style={[
-                    styles.canvasArea,
-                    { 
-                      width: imageDisplayWidth,
-                      height: imageDisplayHeight,
+                ]}
+              >
+                {/* Matte/mount around image */}
+                <View
+                  style={[
+                    styles.frameMatte,
+                    {
+                      width: imageDisplayWidth + matteH * 2,
+                      height: imageDisplayHeight + matteV * 2,
+                      paddingHorizontal: matteH,
+                      paddingVertical: matteV,
                     },
-                  ]}>
+                  ]}
+                >
+                  {/* Canvas/image area */}
+                  <View
+                    style={[
+                      styles.canvasArea,
+                      {
+                        width: imageDisplayWidth,
+                        height: imageDisplayHeight,
+                      },
+                    ]}
+                  >
                     {isLoading && (
                       <View style={styles.loadingContainer}>
                         <ActivityIndicator size="small" color="#999" />
@@ -265,7 +282,7 @@ export default function ZoomableImage({
                       <Animated.Image
                         source={source}
                         style={[
-                          styles.image, 
+                          styles.image,
                           { width: imageDisplayWidth, height: imageDisplayHeight },
                           animatedStyle,
                         ]}
