@@ -90,6 +90,9 @@ export default function MultiplayerDrawingScreen({ route, navigation }) {
   const [isEraser, setIsEraser] = useState(false);
   const [currentStrokeColor, setCurrentStrokeColor] = useState('#000000');
 
+  // Force stroke end state - disables canvas to commit any in-progress stroke
+  const [forceStrokeEnd, setForceStrokeEnd] = useState(false);
+
   // Memoize stroke width to prevent unnecessary canvas re-renders
   const strokeWidth = useMemo(
     () => (isEraser ? DRAWING_CONFIG.ERASER_STROKE_WIDTH : DRAWING_CONFIG.PEN_STROKE_WIDTH),
@@ -120,42 +123,23 @@ export default function MultiplayerDrawingScreen({ route, navigation }) {
   // Lock to prevent concurrent canvas captures (fixes race condition)
   const captureInProgressRef = useRef(false);
 
-  // Track when the last stroke ended - used to wait for in-progress strokes on time up
-  const lastStrokeEndTimeRef = useRef(Date.now());
-  const drawEndResolverRef = useRef(null);
-
-  // Called when user finishes a stroke (lifts finger)
+  // Called when user finishes a stroke (lifts finger) - triggers a capture
   const handleDrawEnd = useCallback(() => {
-    lastStrokeEndTimeRef.current = Date.now();
-    // If we're waiting for a stroke to complete, resolve the promise
-    if (drawEndResolverRef.current) {
-      drawEndResolverRef.current();
-      drawEndResolverRef.current = null;
+    // Capture immediately after stroke ends to get the latest state
+    if (canvasRef.current && !captureInProgressRef.current) {
+      captureInProgressRef.current = true;
+      canvasRef.current
+        .toBase64(CANVAS_CAPTURE.FORMAT, CANVAS_CAPTURE.QUALITY)
+        .then((base64) => {
+          if (base64 && base64.length > MIN_VALID_DRAWING_LENGTH) {
+            lastCanvasDataRef.current = base64;
+          }
+        })
+        .catch(() => {})
+        .finally(() => {
+          captureInProgressRef.current = false;
+        });
     }
-  }, []);
-
-  // Wait for any in-progress stroke to complete (max 800ms wait)
-  const waitForStrokeComplete = useCallback(() => {
-    return new Promise((resolve) => {
-      // If no stroke in progress or last stroke was very recent, resolve immediately
-      const timeSinceLastStroke = Date.now() - lastStrokeEndTimeRef.current;
-      if (timeSinceLastStroke < 100) {
-        // Stroke just ended, good to capture
-        resolve();
-        return;
-      }
-
-      // Set up a resolver that onDrawEnd will call
-      drawEndResolverRef.current = resolve;
-
-      // Max wait of 800ms - if user doesn't lift finger, capture anyway
-      setTimeout(() => {
-        if (drawEndResolverRef.current) {
-          drawEndResolverRef.current = null;
-          resolve();
-        }
-      }, 800);
-    });
   }, []);
 
   // Helper function to safely capture canvas with lock
@@ -184,21 +168,17 @@ export default function MultiplayerDrawingScreen({ route, navigation }) {
   }, []);
 
   // Periodically capture the canvas while drawing for backup
-  // Capture more frequently in the last 10 seconds to preserve final strokes
   useEffect(() => {
     if (Platform.OS === 'web' || showIntro || hasSubmitted) return;
-
-    // Use faster capture interval in final 10 seconds (1 second vs 5 seconds)
-    const interval = timeRemaining <= 10 ? 1000 : CANVAS_CAPTURE.INTERVAL_MS;
 
     const captureInterval = setInterval(() => {
       if (!hasSubmitted && !isSubmitting) {
         captureCanvas();
       }
-    }, interval);
+    }, CANVAS_CAPTURE.INTERVAL_MS);
 
     return () => clearInterval(captureInterval);
-  }, [showIntro, hasSubmitted, isSubmitting, captureCanvas, timeRemaining]);
+  }, [showIntro, hasSubmitted, isSubmitting, captureCanvas]);
 
   useEffect(() => {
     const roomRef = ref(database, `rooms/${roomCode}`);
@@ -339,16 +319,14 @@ export default function MultiplayerDrawingScreen({ route, navigation }) {
       let downloadURL;
       let isPlaceholder = false;
 
-      // On native platforms, try to capture the canvas using our synchronized helper
+      // On native platforms, capture the canvas
       if (Platform.OS !== 'web') {
-        // Wait for any in-progress stroke to complete before capturing
-        // This ensures the last stroke is saved even if user is still drawing when time runs out
-        await waitForStrokeComplete();
-        // Small additional delay for the canvas to fully render the stroke
-        await new Promise((resolve) => setTimeout(resolve, 150));
-
-        // Do a fresh capture right before submitting to get the absolute latest state
         let base64 = null;
+
+        // Small delay to ensure any stroke has been committed after canvas was disabled
+        await new Promise((resolve) => setTimeout(resolve, 50));
+
+        // Try to capture the canvas
         if (canvasRef.current) {
           try {
             base64 = await canvasRef.current.toBase64(
@@ -356,12 +334,15 @@ export default function MultiplayerDrawingScreen({ route, navigation }) {
               CANVAS_CAPTURE.QUALITY
             );
           } catch (e) {
-            console.warn('Final capture failed, using backup:', e.message);
+            console.warn('Canvas capture failed:', e.message);
           }
         }
 
-        // Fall back to the periodic backup if fresh capture failed
+        // Fall back to the periodic backup if capture failed or got less content
         if (!base64 || base64.length < MIN_VALID_DRAWING_LENGTH) {
+          base64 = lastCanvasDataRef.current;
+        } else if (lastCanvasDataRef.current && lastCanvasDataRef.current.length > base64.length) {
+          // If the periodic backup has more content, use it instead
           base64 = lastCanvasDataRef.current;
         }
 
@@ -432,7 +413,6 @@ export default function MultiplayerDrawingScreen({ route, navigation }) {
     playerId,
     currentRound,
     checkAllSubmitted,
-    waitForStrokeComplete,
   ]);
 
   // Handle time up separately
@@ -441,6 +421,41 @@ export default function MultiplayerDrawingScreen({ route, navigation }) {
       handleTimeUp();
     }
   }, [timeRemaining, introAnimationDone, hasSubmitted, isSubmitting, handleTimeUp]);
+
+  // Force stroke to end ~500ms before timer hits 0
+  // Disabling pointer events interrupts the touch, which should commit any in-progress stroke
+  useEffect(() => {
+    if (!introAnimationDone || hasSubmitted || forceStrokeEnd) return;
+
+    if (timeRemaining === 1) {
+      // Wait 500ms (so ~500ms remaining), then disable canvas and capture
+      const timer = setTimeout(() => {
+        if (hasSubmitted) return;
+
+        // Disable canvas
+        setForceStrokeEnd(true);
+
+        // Capture 200ms later to let stroke commit
+        setTimeout(async () => {
+          if (canvasRef.current) {
+            try {
+              const base64 = await canvasRef.current.toBase64(
+                CANVAS_CAPTURE.FORMAT,
+                CANVAS_CAPTURE.QUALITY
+              );
+              if (base64 && base64.length > MIN_VALID_DRAWING_LENGTH) {
+                lastCanvasDataRef.current = base64;
+              }
+            } catch (e) {
+              console.warn('Failed to capture after disable:', e.message);
+            }
+          }
+        }, 200);
+      }, 500); // Disable at ~500ms before 0
+
+      return () => clearTimeout(timer);
+    }
+  }, [timeRemaining, introAnimationDone, hasSubmitted, forceStrokeEnd]);
 
   // Haptic and sound feedback at key timer moments
   useEffect(() => {
@@ -877,7 +892,7 @@ export default function MultiplayerDrawingScreen({ route, navigation }) {
 
       {/* Canvas with floating buttons - full width, no margins */}
       <Animated.View style={[styles.canvasWrapper, { opacity: contentOpacity }]}>
-        <View style={styles.canvasContainer}>
+        <View style={styles.canvasContainer} pointerEvents={forceStrokeEnd ? 'none' : 'auto'}>
           <EnhancedDrawingCanvas
             ref={canvasRef}
             strokeColor={currentStrokeColor}

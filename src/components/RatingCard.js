@@ -104,7 +104,8 @@ export default function RatingCard({
 
     setIsSaving(true);
     try {
-      const { status } = await MediaLibrary.requestPermissionsAsync();
+      // Request permissions - only request photo permissions (not audio/video)
+      const { status } = await MediaLibrary.requestPermissionsAsync(false, ['photo']);
       if (status !== 'granted') {
         Alert.alert('Permission Required', 'Please allow access to save images to your device.');
         setIsSaving(false);
@@ -112,10 +113,17 @@ export default function RatingCard({
       }
 
       const filename = `drawing_${player.name}_${Date.now()}.png`;
-      const fileUri = FileSystem.cacheDirectory + filename;
+      const fileUri = FileSystem.documentDirectory + filename;
 
+      // Download to documentDirectory (more reliable on Android)
       const downloadResult = await FileSystem.downloadAsync(drawingUrl, fileUri);
-      await MediaLibrary.saveToLibraryAsync(downloadResult.uri);
+
+      // Use createAssetAsync instead of deprecated saveToLibraryAsync
+      // This works reliably on Android 10+ with scoped storage
+      await MediaLibrary.createAssetAsync(downloadResult.uri);
+
+      // Clean up the temporary file after saving
+      await FileSystem.deleteAsync(downloadResult.uri, { idempotent: true });
 
       success();
       Alert.alert('Saved!', `${player.name}'s drawing saved to your photos.`);
@@ -140,7 +148,7 @@ export default function RatingCard({
       }
 
       const filename = `drawing_${player.name}_${Date.now()}.png`;
-      const fileUri = FileSystem.cacheDirectory + filename;
+      const fileUri = FileSystem.documentDirectory + filename;
 
       const downloadResult = await FileSystem.downloadAsync(drawingUrl, fileUri);
 
@@ -148,6 +156,9 @@ export default function RatingCard({
         mimeType: 'image/png',
         dialogTitle: `${player.name}'s Drawing`,
       });
+
+      // Clean up the temporary file after sharing
+      await FileSystem.deleteAsync(downloadResult.uri, { idempotent: true });
 
       success();
     } catch (error) {

@@ -68,7 +68,8 @@ export default function DrawingGallery({ visible, onClose, drawings, players }) 
     setIsSaving(true);
 
     try {
-      const { status } = await MediaLibrary.requestPermissionsAsync();
+      // Request permissions - only request photo permissions (not audio/video)
+      const { status } = await MediaLibrary.requestPermissionsAsync(false, ['photo']);
       if (status !== 'granted') {
         Alert.alert('Permission Required', 'Please allow access to save images to your device.');
         setIsSaving(false);
@@ -76,10 +77,17 @@ export default function DrawingGallery({ visible, onClose, drawings, players }) 
       }
 
       const filename = `drawing_${drawing.playerName}_${Date.now()}.png`;
-      const fileUri = FileSystem.cacheDirectory + filename;
+      const fileUri = FileSystem.documentDirectory + filename;
 
+      // Download to documentDirectory (more reliable on Android)
       const downloadResult = await FileSystem.downloadAsync(drawing.url, fileUri);
-      await MediaLibrary.saveToLibraryAsync(downloadResult.uri);
+
+      // Use createAssetAsync instead of deprecated saveToLibraryAsync
+      // This works reliably on Android 10+ with scoped storage
+      await MediaLibrary.createAssetAsync(downloadResult.uri);
+
+      // Clean up the temporary file after saving
+      await FileSystem.deleteAsync(downloadResult.uri, { idempotent: true });
 
       success();
       Alert.alert('Saved!', `${drawing.playerName}'s drawing saved to your photos.`);
@@ -104,7 +112,7 @@ export default function DrawingGallery({ visible, onClose, drawings, players }) 
       }
 
       const filename = `drawing_${drawing.playerName}_${Date.now()}.png`;
-      const fileUri = FileSystem.cacheDirectory + filename;
+      const fileUri = FileSystem.documentDirectory + filename;
 
       const downloadResult = await FileSystem.downloadAsync(drawing.url, fileUri);
 
@@ -112,6 +120,9 @@ export default function DrawingGallery({ visible, onClose, drawings, players }) 
         mimeType: 'image/png',
         dialogTitle: `${drawing.playerName}'s Drawing`,
       });
+
+      // Clean up the temporary file after sharing
+      await FileSystem.deleteAsync(downloadResult.uri, { idempotent: true });
 
       success();
     } catch (error) {
@@ -127,7 +138,8 @@ export default function DrawingGallery({ visible, onClose, drawings, players }) 
     setIsSaving(true);
 
     try {
-      const { status } = await MediaLibrary.requestPermissionsAsync();
+      // Request permissions - only request photo permissions (not audio/video)
+      const { status } = await MediaLibrary.requestPermissionsAsync(false, ['photo']);
       if (status !== 'granted') {
         Alert.alert('Permission Required', 'Please allow access to save images to your device.');
         setIsSaving(false);
@@ -138,10 +150,17 @@ export default function DrawingGallery({ visible, onClose, drawings, players }) 
       for (const drawing of drawingsList) {
         try {
           const filename = `drawing_${drawing.playerName}_${Date.now()}.png`;
-          const fileUri = FileSystem.cacheDirectory + filename;
+          const fileUri = FileSystem.documentDirectory + filename;
 
+          // Download to documentDirectory (more reliable on Android)
           const downloadResult = await FileSystem.downloadAsync(drawing.url, fileUri);
-          await MediaLibrary.saveToLibraryAsync(downloadResult.uri);
+
+          // Use createAssetAsync instead of deprecated saveToLibraryAsync
+          await MediaLibrary.createAssetAsync(downloadResult.uri);
+
+          // Clean up the temporary file after saving
+          await FileSystem.deleteAsync(downloadResult.uri, { idempotent: true });
+
           savedCount++;
         } catch (err) {
           console.error(`Error saving ${drawing.playerName}'s drawing:`, err);

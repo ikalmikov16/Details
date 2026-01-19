@@ -68,13 +68,21 @@ jest.mock('react-native-gesture-handler', () => ({
 // Mock expo-file-system
 jest.mock('expo-file-system/legacy', () => ({
   cacheDirectory: 'file://cache/',
-  downloadAsync: jest.fn(() => Promise.resolve({ uri: 'file://cache/test.png' })),
+  documentDirectory: 'file://documents/',
+  downloadAsync: jest.fn(() => Promise.resolve({ uri: 'file://documents/test.png' })),
+  deleteAsync: jest.fn(() => Promise.resolve()),
+  writeAsStringAsync: jest.fn(() => Promise.resolve()),
+  EncodingType: {
+    Base64: 'base64',
+    UTF8: 'utf8',
+  },
 }));
 
 // Mock expo-media-library
 jest.mock('expo-media-library', () => ({
   requestPermissionsAsync: jest.fn(() => Promise.resolve({ status: 'granted' })),
   saveToLibraryAsync: jest.fn(() => Promise.resolve()),
+  createAssetAsync: jest.fn(() => Promise.resolve({ id: 'asset-1', uri: 'file://asset.png' })),
 }));
 
 // Mock expo-sharing

@@ -50,6 +50,27 @@ const EnhancedDrawingCanvas = forwardRef(
         canvasRef.current?.reset();
       },
 
+      // Force end/commit the current stroke if one is in progress
+      // This is needed when timer runs out while user is still drawing
+      endCurrentStroke: () => {
+        try {
+          // Try various methods that different canvas implementations might have
+          if (canvasRef.current?.endStroke) {
+            canvasRef.current.endStroke();
+          } else if (canvasRef.current?.finishPath) {
+            canvasRef.current.finishPath();
+          } else if (canvasRef.current?.commitCurrentPath) {
+            canvasRef.current.commitCurrentPath();
+          }
+          // Also try to flush the Skia surface if accessible
+          if (canvasRef.current?.flush) {
+            canvasRef.current.flush();
+          }
+        } catch (_e) {
+          // Silent fail - method might not exist
+        }
+      },
+
       // Export canvas to base64
       toBase64: async (format = 'png', quality = 1.0) => {
         if (!canvasRef.current) return null;
@@ -69,6 +90,9 @@ const EnhancedDrawingCanvas = forwardRef(
         const paths = canvasRef.current?.toPaths?.();
         return paths && paths.length > 0;
       },
+
+      // Get the underlying canvas ref for direct access if needed
+      getInternalRef: () => canvasRef.current,
     }));
 
     // Web fallback - show message that drawing isn't supported
