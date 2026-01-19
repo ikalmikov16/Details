@@ -53,7 +53,7 @@ jest.mock('./src/config/firebase', () => require('./__tests__/__mocks__/firebase
 // Mock react-native-reanimated
 jest.mock('react-native-reanimated', () => {
   const Reanimated = require('react-native-reanimated/mock');
-  Reanimated.default.call = () => {};
+  Reanimated.default.call = () => { };
   return Reanimated;
 });
 

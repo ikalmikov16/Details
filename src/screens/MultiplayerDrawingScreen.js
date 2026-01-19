@@ -64,7 +64,7 @@ async function uploadBase64Image(base64Data, storageReference) {
     return downloadURL;
   } catch (error) {
     // Clean up temp file on error
-    await FileSystem.deleteAsync(tempPath, { idempotent: true }).catch(() => {});
+    await FileSystem.deleteAsync(tempPath, { idempotent: true }).catch(() => { });
     throw error;
   }
 }
@@ -135,7 +135,7 @@ export default function MultiplayerDrawingScreen({ route, navigation }) {
             lastCanvasDataRef.current = base64;
           }
         })
-        .catch(() => {})
+        .catch(() => { })
         .finally(() => {
           captureInProgressRef.current = false;
         });
