@@ -95,3 +95,19 @@ jest.mock('expo-sharing', () => ({
 jest.mock('react-native-view-shot', () => ({
   captureRef: jest.fn(() => Promise.resolve('file://captured.png')),
 }));
+
+// Mock react-native-signature-canvas
+jest.mock('react-native-signature-canvas', () => {
+  const React = require('react');
+  const { View } = require('react-native');
+  return React.forwardRef((props, ref) => {
+    React.useImperativeHandle(ref, () => ({
+      clearSignature: jest.fn(),
+      readSignature: jest.fn(),
+      undo: jest.fn(),
+      changePenColor: jest.fn(),
+      changePenSize: jest.fn(),
+    }));
+    return React.createElement(View, { testID: 'signature-canvas', ...props });
+  });
+});

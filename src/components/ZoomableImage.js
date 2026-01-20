@@ -2,11 +2,10 @@ import React, { useEffect, useState } from 'react';
 import { ActivityIndicator, Image, StyleSheet, View, useWindowDimensions } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
+  runOnJS,
   useAnimatedStyle,
   useSharedValue,
   withSpring,
-  withTiming,
-  runOnJS,
 } from 'react-native-reanimated';
 
 /**
@@ -35,9 +34,14 @@ export default function ZoomableImage({
   const savedTranslateY = useSharedValue(0);
   const focalX = useSharedValue(0);
   const focalY = useSharedValue(0);
-  const opacity = useSharedValue(0);
+  const opacity = useSharedValue(1); // Start visible - don't hide image
   const [isLoading, setIsLoading] = useState(true);
-  const [imageDimensions, setImageDimensions] = useState(null);
+  // Default to 1:1 aspect ratio - will be updated when image dimensions are loaded
+  const [imageDimensions, setImageDimensions] = useState({
+    width: 400,
+    height: 400,
+    aspectRatio: 1,
+  });
 
   // Get actual image dimensions from the URI
   useEffect(() => {
@@ -124,7 +128,12 @@ export default function ZoomableImage({
 
   const handleLoadEnd = () => {
     setIsLoading(false);
-    opacity.value = withTiming(1, { duration: 200 });
+  };
+
+  const handleError = () => {
+    // If image fails to load, still hide the loading spinner
+    setIsLoading(false);
+    console.warn('ZoomableImage: Failed to load image');
   };
 
   // Frame adds extra size around the image
@@ -172,6 +181,7 @@ export default function ZoomableImage({
             style={[styles.image, { width: displayWidth, height: displayHeight }, animatedStyle]}
             resizeMode={resizeMode}
             onLoadEnd={handleLoadEnd}
+            onError={handleError}
           />
         </GestureDetector>
       </View>
@@ -288,6 +298,7 @@ export default function ZoomableImage({
                         ]}
                         resizeMode={resizeMode}
                         onLoadEnd={handleLoadEnd}
+                        onError={handleError}
                       />
                     </GestureDetector>
                   </View>

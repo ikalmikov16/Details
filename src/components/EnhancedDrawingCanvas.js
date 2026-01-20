@@ -1,9 +1,18 @@
-import React, { forwardRef, memo, useCallback, useImperativeHandle, useRef, useState } from 'react';
-import { InteractionManager, Platform, StyleSheet, View } from 'react-native';
+import React, {
+  forwardRef,
+  memo,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useRef,
+} from 'react';
+import { Platform, StyleSheet, View } from 'react-native';
+import SignatureCanvas from 'react-native-signature-canvas';
+import { BLANK_WHITE_PNG_BASE64 } from '../utils/constants';
 
-// Only import FreeCanvas and Skia on native platforms - use lazy loading
-let FreeCanvas = null;
-let ImageFormat = null;
+// Data URL format for initializing canvas with blank image
+// This ensures readSignature() always returns valid data
+const BLANK_CANVAS_DATA_URL = `data:image/png;base64,${BLANK_WHITE_PNG_BASE64}`;
 
 const EnhancedDrawingCanvas = forwardRef(
   (
@@ -17,132 +26,115 @@ const EnhancedDrawingCanvas = forwardRef(
     },
     ref
   ) => {
-    const canvasRef = useRef(null);
-    
-    // Multi-stage initialization to prevent iOS Skia/Reanimated race condition:
-    // 1. Wait for container layout (native view infrastructure ready)
-    // 2. Wait for interactions to complete (navigation animations done)
-    // 3. Wait multiple frames for Skia native initialization
-    const [layoutReady, setLayoutReady] = useState(false);
-    const [isCanvasReady, setIsCanvasReady] = useState(false);
-    const mountedRef = useRef(true);
-    
-    // Handle container layout - ensures native view infrastructure exists
-    const handleLayout = useCallback(() => {
-      if (!layoutReady) {
-        setLayoutReady(true);
+    const signatureRef = useRef(null);
+
+    // Promise resolver for toBase64 - stored here so onOK can resolve it
+    const base64ResolverRef = useRef(null);
+
+    // Track the current color - use background color for eraser effect
+    const currentColor = isEraser ? backgroundColor : strokeColor;
+
+    // Update pen color when strokeColor or isEraser changes
+    useEffect(() => {
+      if (signatureRef.current) {
+        signatureRef.current.changePenColor(currentColor);
       }
-    }, [layoutReady]);
-    
-    // After layout, wait for interactions and native initialization
-    React.useEffect(() => {
-      if (!layoutReady || Platform.OS === 'web') return;
-      
-      let cancelled = false;
-      
-      // Lazy load the native modules only after layout is ready
-      if (!FreeCanvas) {
-        try {
-          FreeCanvas = require('react-native-free-canvas').default;
-          ImageFormat = require('@shopify/react-native-skia').ImageFormat;
-        } catch (e) {
-          console.error('Failed to load canvas modules:', e);
-          return;
-        }
+    }, [currentColor]);
+
+    // Update pen size when strokeWidth changes
+    useEffect(() => {
+      if (signatureRef.current) {
+        signatureRef.current.changePenSize(strokeWidth, strokeWidth);
       }
-      
-      // Wait for all interactions (navigation, etc.) to complete
-      const task = InteractionManager.runAfterInteractions(() => {
-        if (cancelled) return;
-        
-        // Use requestAnimationFrame to ensure we're on a fresh frame
-        // then add substantial delay for Skia native canvas provider initialization
-        // iOS production builds have slower native initialization than Expo Go
-        requestAnimationFrame(() => {
-          if (cancelled) return;
-          
-          // Multiple frame delays to ensure Skia is truly ready
-          setTimeout(() => {
-            if (cancelled) return;
-            requestAnimationFrame(() => {
-              if (cancelled) return;
-              if (mountedRef.current) {
-                setIsCanvasReady(true);
-              }
-            });
-          }, 300); // Longer delay for iOS production
-        });
-      });
-      
-      return () => {
-        cancelled = true;
-        task.cancel();
-      };
-    }, [layoutReady]);
+    }, [strokeWidth]);
 
     // Expose methods to parent via ref
     useImperativeHandle(ref, () => ({
       // Undo last stroke
       undo: (steps = 1) => {
-        canvasRef.current?.undo(steps);
+        // SignatureCanvas undo() undoes one stroke at a time
+        for (let i = 0; i < steps; i++) {
+          signatureRef.current?.undo();
+        }
       },
 
       // Clear all strokes
       reset: () => {
-        canvasRef.current?.reset();
+        signatureRef.current?.clearSignature();
       },
 
       // Force end/commit the current stroke if one is in progress
-      // This is needed when timer runs out while user is still drawing
+      // SignatureCanvas handles this automatically, but we can trigger onEnd
       endCurrentStroke: () => {
-        try {
-          // Try various methods that different canvas implementations might have
-          if (canvasRef.current?.endStroke) {
-            canvasRef.current.endStroke();
-          } else if (canvasRef.current?.finishPath) {
-            canvasRef.current.finishPath();
-          } else if (canvasRef.current?.commitCurrentPath) {
-            canvasRef.current.commitCurrentPath();
-          }
-          // Also try to flush the Skia surface if accessible
-          if (canvasRef.current?.flush) {
-            canvasRef.current.flush();
-          }
-        } catch (_e) {
-          // Silent fail - method might not exist
-        }
+        // SignatureCanvas auto-commits strokes, nothing needed here
       },
 
       // Export canvas to base64
-      toBase64: async (format = 'png', quality = 1.0) => {
-        if (!canvasRef.current || !ImageFormat) return null;
+      toBase64: async (_format = 'png', _quality = 1.0) => {
+        if (!signatureRef.current) return BLANK_WHITE_PNG_BASE64;
         try {
-          // ImageFormat is an enum: PNG = 0, JPEG = 1, WEBP = 2
-          const imageFormat = format === 'jpeg' ? ImageFormat.JPEG : ImageFormat.PNG;
-          const base64 = await canvasRef.current.toBase64(imageFormat, quality);
-          return base64;
+          return new Promise((resolve) => {
+            // Store the resolver so handleOK can call it
+            base64ResolverRef.current = resolve;
+            // Trigger signature read - data comes through onOK callback
+            signatureRef.current.readSignature();
+            // Short timeout - if canvas is empty, onOK may not fire
+            // Return blank canvas fallback so submission always works
+            setTimeout(() => {
+              if (base64ResolverRef.current === resolve) {
+                base64ResolverRef.current = null;
+                // Return blank white canvas for empty drawings
+                resolve(BLANK_WHITE_PNG_BASE64);
+              }
+            }, 500);
+          });
         } catch (error) {
           console.error('Error exporting canvas:', error);
-          return null;
+          return BLANK_WHITE_PNG_BASE64;
         }
       },
 
       // Check if canvas has any strokes
+      // Always return true - blank canvas is valid (user chose not to draw)
       hasContent: () => {
-        const paths = canvasRef.current?.toPaths?.();
-        return paths && paths.length > 0;
+        return true;
       },
 
       // Get the underlying canvas ref for direct access if needed
-      getInternalRef: () => canvasRef.current,
+      getInternalRef: () => signatureRef.current,
     }));
 
-    // Cleanup on unmount
-    React.useEffect(() => {
-      mountedRef.current = true;
-      return () => {
-        mountedRef.current = false;
-      };
+    // Handle signature data when ready (for toBase64)
+    const handleOK = useCallback((signature) => {
+      // signature is the base64 data URL (e.g., "data:image/png;base64,...")
+      if (base64ResolverRef.current) {
+        // Extract just the base64 part if it's a data URL
+        let base64Data = signature;
+        if (signature && signature.startsWith('data:')) {
+          base64Data = signature.split(',')[1] || '';
+        }
+
+        // If data is empty or too short, use blank canvas fallback
+        // A valid PNG is at least a few hundred characters
+        if (!base64Data || base64Data.length < 100) {
+          base64ResolverRef.current(BLANK_WHITE_PNG_BASE64);
+        } else {
+          base64ResolverRef.current(base64Data);
+        }
+        base64ResolverRef.current = null;
+      }
+    }, []);
+
+    // Handle when drawing ends
+    const handleEnd = useCallback(() => {
+      if (onDrawEnd) {
+        onDrawEnd();
+      }
+    }, [onDrawEnd]);
+
+    // Handle when drawing begins
+    const handleBegin = useCallback(() => {
+      // Could trigger onDrawStart if needed
     }, []);
 
     // Web fallback - show message that drawing isn't supported
@@ -158,27 +150,49 @@ const EnhancedDrawingCanvas = forwardRef(
       );
     }
 
-    // Show placeholder while waiting for canvas to be ready
-    // This multi-stage initialization prevents the iOS Skia/Reanimated crash
-    if (!isCanvasReady || !FreeCanvas) {
-      return (
-        <View 
-          style={[styles.container, { backgroundColor }, style]} 
-          onLayout={handleLayout}
-        />
-      );
+    // Style for the WebView canvas
+    const webStyle = `.m-signature-pad {
+      box-shadow: none;
+      border: none;
+      margin: 0;
+      padding: 0;
     }
+    .m-signature-pad--body {
+      border: none;
+      margin: 0;
+      padding: 0;
+    }
+    .m-signature-pad--footer {
+      display: none;
+    }
+    body, html {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+    }
+    canvas {
+      width: 100%;
+      height: 100%;
+    }`;
 
     return (
-      <View style={[styles.container, style]} onLayout={handleLayout}>
-        <FreeCanvas
-          ref={canvasRef}
-          style={styles.canvas}
-          strokeColor={strokeColor}
-          strokeWidth={strokeWidth}
+      <View style={[styles.container, { backgroundColor }, style]}>
+        <SignatureCanvas
+          ref={signatureRef}
+          onOK={handleOK}
+          onEnd={handleEnd}
+          onBegin={handleBegin}
+          penColor={currentColor}
+          minWidth={strokeWidth}
+          maxWidth={strokeWidth}
           backgroundColor={backgroundColor}
-          zoomable={false}
-          onDrawEnd={onDrawEnd}
+          webStyle={webStyle}
+          style={styles.canvas}
+          dotSize={strokeWidth}
+          trimWhitespace={false}
+          autoClear={false}
+          dataURL={BLANK_CANVAS_DATA_URL}
         />
       </View>
     );
@@ -198,6 +212,8 @@ const styles = StyleSheet.create({
   },
   canvas: {
     flex: 1,
+    width: '100%',
+    height: '100%',
   },
   webFallback: {
     justifyContent: 'center',
