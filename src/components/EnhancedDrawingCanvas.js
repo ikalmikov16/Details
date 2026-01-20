@@ -1,4 +1,4 @@
-import React, { forwardRef, memo, useImperativeHandle, useRef } from 'react';
+import React, { forwardRef, memo, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import { Platform, StyleSheet, View } from 'react-native';
 
 // Only import FreeCanvas and Skia on native platforms
@@ -22,6 +22,19 @@ const EnhancedDrawingCanvas = forwardRef(
     ref
   ) => {
     const canvasRef = useRef(null);
+    
+    // Delay rendering FreeCanvas to let native Skia view fully initialize
+    // This prevents a race condition where Reanimated worklets try to
+    // set properties before the canvas provider is ready (iOS crash)
+    const [isCanvasReady, setIsCanvasReady] = useState(false);
+    
+    useEffect(() => {
+      // Give the native view time to initialize before rendering FreeCanvas
+      const timer = setTimeout(() => {
+        setIsCanvasReady(true);
+      }, 100);
+      return () => clearTimeout(timer);
+    }, []);
 
     // Expose methods to parent via ref
     useImperativeHandle(ref, () => ({
@@ -90,6 +103,14 @@ const EnhancedDrawingCanvas = forwardRef(
             </View>
           </View>
         </View>
+      );
+    }
+
+    // Show empty container while waiting for canvas to be ready
+    // This prevents the Reanimated/Skia race condition crash on iOS
+    if (!isCanvasReady) {
+      return (
+        <View style={[styles.container, { backgroundColor }, style]} />
       );
     }
 
