@@ -1,5 +1,5 @@
 import React, { forwardRef, memo, useEffect, useImperativeHandle, useRef, useState } from 'react';
-import { Platform, StyleSheet, View } from 'react-native';
+import { InteractionManager, Platform, StyleSheet, View } from 'react-native';
 
 // Only import FreeCanvas and Skia on native platforms
 let FreeCanvas = null;
@@ -29,11 +29,23 @@ const EnhancedDrawingCanvas = forwardRef(
     const [isCanvasReady, setIsCanvasReady] = useState(false);
     
     useEffect(() => {
-      // Give the native view time to initialize before rendering FreeCanvas
-      const timer = setTimeout(() => {
-        setIsCanvasReady(true);
-      }, 100);
-      return () => clearTimeout(timer);
+      let isMounted = true;
+      
+      // Wait for navigation/animations to complete, then add extra delay
+      // to ensure native Skia view is fully initialized
+      const interactionPromise = InteractionManager.runAfterInteractions(() => {
+        // Additional delay for native Skia canvas provider initialization
+        setTimeout(() => {
+          if (isMounted) {
+            setIsCanvasReady(true);
+          }
+        }, 150);
+      });
+      
+      return () => {
+        isMounted = false;
+        interactionPromise.cancel();
+      };
     }, []);
 
     // Expose methods to parent via ref
