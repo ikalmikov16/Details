@@ -9,7 +9,6 @@
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
-      "newArchEnabled": false,
       "supportsTablet": false,
       "bundleIdentifier": "com.sketchoff.app",
       "buildNumber": "2",
@@ -59,7 +58,9 @@
           "photosPermission": "Allow SketchOff to save drawings to your photo library.",
           "savePhotosPermission": "Allow SketchOff to save drawings to your photo library.",
           "isAccessMediaLocationEnabled": true,
-          "granularPermissions": ["photo"]
+          "granularPermissions": [
+            "photo"
+          ]
         }
       ],
       "expo-audio",
