@@ -1,6 +1,5 @@
 import React, { forwardRef, memo, useImperativeHandle, useRef } from 'react';
 import { Platform, StyleSheet, View } from 'react-native';
-import { useSharedValue } from 'react-native-reanimated';
 
 // Only import FreeCanvas and Skia on native platforms
 let FreeCanvas = null;
@@ -23,20 +22,6 @@ const EnhancedDrawingCanvas = forwardRef(
     ref
   ) => {
     const canvasRef = useRef(null);
-
-    // Use shared values for reactive stroke color/width
-    // These run on the UI thread, avoiding JS thread blocking
-    const strokeColorValue = useSharedValue(strokeColor);
-    const strokeWidthValue = useSharedValue(strokeWidth);
-
-    // Update shared values when props change - runs on UI thread
-    React.useEffect(() => {
-      strokeColorValue.value = strokeColor;
-    }, [strokeColor, strokeColorValue]);
-
-    React.useEffect(() => {
-      strokeWidthValue.value = strokeWidth;
-    }, [strokeWidth, strokeWidthValue]);
 
     // Expose methods to parent via ref
     useImperativeHandle(ref, () => ({
@@ -113,8 +98,8 @@ const EnhancedDrawingCanvas = forwardRef(
         <FreeCanvas
           ref={canvasRef}
           style={styles.canvas}
-          strokeColor={strokeColorValue}
-          strokeWidth={strokeWidthValue}
+          strokeColor={strokeColor}
+          strokeWidth={strokeWidth}
           backgroundColor={backgroundColor}
           zoomable={false}
           onDrawEnd={onDrawEnd}
